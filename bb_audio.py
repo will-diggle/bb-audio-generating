@@ -87,9 +87,17 @@ def existing_keys(client, date: str) -> set[str]:
 # ── Plan ──────────────────────────────────────────────────────────────────────
 
 def fetch_bundle() -> dict:
+    """Today's brief from the Worker (about 17 MB). Retried: a fetch timed out on 28 Oct."""
     req = urllib.request.Request(f"{DATA_URL}/latest", headers={"User-Agent": "bb-audio-generating"})
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        return json.load(resp)
+    for attempt in range(4):
+        try:
+            with urllib.request.urlopen(req, timeout=300) as resp:
+                return json.load(resp)
+        except Exception as e:  # noqa: BLE001
+            if attempt == 3:
+                raise
+            log(f"Fetching the brief failed ({e}); trying again in {15 * (attempt + 1)} s")
+            time.sleep(15 * (attempt + 1))
 
 
 def articles(bundle: dict):
