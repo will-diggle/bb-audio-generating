@@ -33,15 +33,17 @@ KEEP_DAYS = int(os.environ.get("BB_AUDIO_KEEP_DAYS") or 14)
 # Voices per language, alternating story by story (the same story keeps its voice at every level and
 # length). Supertonic 3's ten built-in voices: F1 Sarah, F2 Lily, F3 Jessica (broadcast announcer),
 # F4 Olivia, F5 Emily (British-sounding), M1 Alex, M2 James, M3 Robert (authoritative presenter),
-# M4 Sam, M5 Daniel. English is Emily only (Will, 28 Oct). Override with BB_VOICES='{"de": ["F4","M2"]}'.
+# M4 Sam, M5 Daniel. English is Emily only and German Alex only (Will, 28 Oct). Override with BB_VOICES='{"de": ["F4","M2"]}'.
 VOICES: dict[str, list[str]] = {lang: ["F3", "M3"] for lang in ("de", "fr", "es", "it", "pt", "sv", "hu", "tr", "ar")}
 VOICES["en"] = ["F5"]
+VOICES["de"] = ["M1"]  # Alex (Will, 28 Oct)
 VOICES.update(json.loads(os.environ.get("BB_VOICES") or "{}"))
 
 # Quality = refinement steps (2-16; the library default is 8). Speed 1.0 reads too fast for learners;
 # 0.90-0.95 sounds right (Will, 28 Oct).
 STEPS = int(os.environ.get("BB_TTS_STEPS") or 12)
 SPEED = float(os.environ.get("BB_TTS_SPEED") or 0.92)
+SPEED_BY_LANG: dict[str, float] = {"de": 0.95}  # Alex reads German best a touch quicker (Will, 28 Oct)
 
 # Supertonic refuses typographic quotes (German „ …); plain ones read the same.
 PLAIN = str.maketrans({"„": '"', "“": '"', "”": '"', "«": '"', "»": '"', "‹": "'", "›": "'", "‚": "'",
@@ -181,7 +183,8 @@ def cmd_speak(args) -> None:
             style = styles.get(it["voice"]) or styles.setdefault(it["voice"], tts.get_voice_style(it["voice"]))
             while True:
                 try:
-                    wav, _ = tts.synthesize(text, voice_style=style, lang=it["lang"], total_steps=args.steps, speed=SPEED)
+                    wav, _ = tts.synthesize(text, voice_style=style, lang=it["lang"], total_steps=args.steps,
+                                              speed=SPEED_BY_LANG.get(it["lang"], SPEED))
                     break
                 except ValueError as e:  # a character the model can't read: say nothing for it
                     bad = re.findall(r"'(.)'", str(e))
