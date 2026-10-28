@@ -3,9 +3,10 @@ and saves the MP3s to Cloudflare R2, where the Worker's /audio route serves them
 
 Runs on GitHub Actions in three steps (see .github/workflows/generate-audio.yml):
 
-    python bb_audio.py plan  --batches 20     today's brief → plan.json, split into equal batches
-    python bb_audio.py speak --batch 7        one batch: synthesise, encode, upload
-    python bb_audio.py check                  every article has its MP3? + delete old days
+    python bb_audio.py plan  --batches 20         today's brief → plan.json: Global News wave, other wave
+    python bb_audio.py speak --wave gn --batch 7  one batch: synthesise, encode, upload
+    python bb_audio.py label                      add audioKey to the live brief where the MP3 exists
+    python bb_audio.py check                      every article has its MP3? + delete old days
 
 R2 keys are the ones the Google TTS stage used (bilinguist_audio.py), so the app and Worker
 need no change: `{date}/{lang}/{level}/{length}/{slug}.mp3`, level "Native" for native articles.
@@ -118,7 +119,7 @@ def cmd_plan(args) -> None:
     if date != want:
         log(f"The published brief is for {date or 'no date'}, not {want}: nothing to do yet.")
         with out.open("a") as f:
-            f.write("matrix=[]\n")
+            f.write("gn_matrix=[]\nrest_matrix=[]\n")
         return
 
     # Each story keeps one voice everywhere; stories alternate between the language's two voices.
@@ -142,26 +143,35 @@ def cmd_plan(args) -> None:
             skipped += 1
             continue
         pair = VOICES.get(lang) or ["F3", "M3"]
-        items.append({"key": key, "lang": lang, "voice": pair[slugs[lang].index(slug) % len(pair)], "text": text})
+        items.append({"key": key, "lang": lang, "voice": pair[slugs[lang].index(slug) % len(pair)], "text": text,
+                      "genre": (a.get("genre") or "").upper()})
     if args.limit:
         items = items[: args.limit]
 
-    # Longest first into the lightest batch, so the batches finish together.
-    n = max(1, min(args.batches, len(items)))
-    batches: list[list[dict]] = [[] for _ in range(n)]
-    sizes = [0] * n
-    for it in sorted(items, key=lambda i: -len(i["text"])):
-        b = sizes.index(min(sizes))
-        batches[b].append(it)
-        sizes[b] += len(it["text"])
-    batches = [b for b in batches if b]
+    # Two waves: Global News first (the only articles today's app can play, labelled as soon as they
+    # are read), then everything else. Within a wave: longest first into the lightest batch, so the
+    # batches finish together.
+    def split(wave: list[dict]) -> list[list[dict]]:
+        n = max(1, min(args.batches, len(wave)))
+        batches: list[list[dict]] = [[] for _ in range(n)]
+        sizes = [0] * n
+        for it in sorted(wave, key=lambda i: -len(i["text"])):
+            b = sizes.index(min(sizes))
+            batches[b].append(it)
+            sizes[b] += len(it["text"])
+        return [b for b in batches if b]
 
-    PLAN.write_text(json.dumps({"date": date, "batches": batches}, ensure_ascii=False))
-    total = sum(len(i["text"]) for i in items)
-    log(f"{date}: {len(items)} articles to read ({total:,} characters) in {len(batches)} batches; "
-        f"{skipped} already in R2")
+    waves = {"gn": split([i for i in items if i["genre"] == "GLOBAL NEWS"]),
+             "rest": split([i for i in items if i["genre"] != "GLOBAL NEWS"])}
+    PLAN.write_text(json.dumps({"date": date, "waves": waves}, ensure_ascii=False))
+    for name, label in (("gn", "Global News"), ("rest", "other topics")):
+        wave = [i for b in waves[name] for i in b]
+        log(f"{date} {label}: {len(wave)} articles ({sum(len(i['text']) for i in wave):,} characters) "
+            f"in {len(waves[name])} batches")
+    log(f"{skipped} already in R2")
     with out.open("a") as f:
-        f.write(f"matrix={json.dumps(list(range(len(batches))))}\n")
+        f.write(f"gn_matrix={json.dumps(list(range(len(waves['gn']))))}\n")
+        f.write(f"rest_matrix={json.dumps(list(range(len(waves['rest']))))}\n")
         f.write(f"date={date}\n")
 
 
@@ -169,7 +179,7 @@ def cmd_plan(args) -> None:
 
 def cmd_speak(args) -> None:
     plan = json.loads(PLAN.read_text())
-    batch = plan["batches"][args.batch]
+    batch = plan["waves"][args.wave][args.batch]
     from supertonic import TTS
     tts = TTS(model="supertonic-3")
     styles: dict[str, object] = {}
@@ -213,7 +223,7 @@ def cmd_speak(args) -> None:
             log(f"FAILED {it['key']}: {e}")
 
     took = time.time() - start
-    log(f"batch {args.batch}: {ok} read, {failed} failed, {chars:,} chars → {audio_secs / 60:.0f} min of audio "
+    log(f"{args.wave} batch {args.batch}: {ok} read, {failed} failed, {chars:,} chars → {audio_secs / 60:.0f} min of audio "
         f"in {took / 60:.1f} min ({chars / max(took, 1):.0f} chars/s){'' if client else ' (dry run: nothing uploaded)'}")
     if failed and failed >= max(1, len(batch) // 10):
         sys.exit(1)
@@ -340,6 +350,7 @@ def main() -> None:
     a.add_argument("--limit", type=int, default=0, help="only this many articles (a test run)")
     a.set_defaults(fn=cmd_plan)
     a = sub.add_parser("speak")
+    a.add_argument("--wave", choices=["gn", "rest"], required=True)
     a.add_argument("--batch", type=int, required=True)
     a.add_argument("--steps", type=int, default=STEPS)
     a.set_defaults(fn=cmd_speak)

@@ -4,6 +4,9 @@ name: Generate audio
 # saves the MP3s to Cloudflare R2. Started by the main pipeline ("brief-ready") once the
 # brief is published, with two scheduled runs as a backup. Every run skips articles that
 # already have audio, so extra runs cost nothing.
+#
+# Order: Global News on all machines first (the only articles today's app can play), then
+# label the live brief so Listen appears, then every other topic, then label again + check.
 on:
   repository_dispatch:
     types: [brief-ready]
@@ -16,7 +19,7 @@ on:
         description: "Only this many articles (0 = all). A test run."
         default: "0"
       batches:
-        description: "Machines to split the work across (max 20)"
+        description: "Machines per wave (max 20)"
         default: "20"
 
 concurrency:
@@ -35,7 +38,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
-      matrix: ${{ steps.plan.outputs.matrix }}
+      gn_matrix: ${{ steps.plan.outputs.gn_matrix }}
+      rest_matrix: ${{ steps.plan.outputs.rest_matrix }}
       date: ${{ steps.plan.outputs.date }}
     steps:
       - uses: actions/checkout@v4
@@ -44,7 +48,7 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -r requirements.txt
-      # The 385 MB model is downloaded once and cached, so the 20 speak jobs don't each fetch it.
+      # The 385 MB model is downloaded once and cached, so the speak jobs don't each fetch it.
       - uses: actions/cache@v4
         with:
           path: ~/.cache/supertonic3
@@ -52,29 +56,82 @@ jobs:
       - name: Warm the model cache
         run: python -c "from supertonic import TTS; TTS(model='supertonic-3')"
       - id: plan
-        name: Plan today's batches
+        name: Plan today's waves
         env:
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         run: python bb_audio.py plan --batches "${{ inputs.batches || 20 }}" --limit "${{ inputs.limit || 0 }}"
       - uses: actions/upload-artifact@v4
-        if: steps.plan.outputs.matrix != '[]'
+        if: steps.plan.outputs.date != ''
         with:
           name: plan
           path: plan.json
           retention-days: 2
 
-  speak:
+  speak-global-news:
     needs: plan
-    if: needs.plan.outputs.matrix != '[]'
+    if: needs.plan.outputs.gn_matrix != '[]' && needs.plan.outputs.gn_matrix != ''
     runs-on: ubuntu-latest
     timeout-minutes: 300
     strategy:
       fail-fast: false
       max-parallel: 20
       matrix:
-        batch: ${{ fromJSON(needs.plan.outputs.matrix) }}
+        batch: ${{ fromJSON(needs.plan.outputs.gn_matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: command -v ffmpeg || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+      - uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/supertonic3
+          key: supertonic3-${{ env.SUPERTONIC_VERSION }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: plan
+      - name: Read Global News batch ${{ matrix.batch }} aloud
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: python bb_audio.py speak --wave gn --batch ${{ matrix.batch }}
+
+  # Listen appears on today's app as soon as Global News is read, not after every topic.
+  label-global-news:
+    needs: [plan, speak-global-news]
+    if: always() && needs.plan.outputs.date != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install boto3
+      - name: Label the live brief with its audio
+        env:
+          DATA_REPO_TOKEN: ${{ secrets.DATA_REPO_TOKEN }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: python bb_audio.py label
+
+  speak-other-topics:
+    needs: [plan, speak-global-news]
+    if: always() && needs.plan.outputs.rest_matrix != '[]' && needs.plan.outputs.rest_matrix != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        batch: ${{ fromJSON(needs.plan.outputs.rest_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -95,10 +152,10 @@ jobs:
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-        run: python bb_audio.py speak --batch ${{ matrix.batch }}
+        run: python bb_audio.py speak --wave rest --batch ${{ matrix.batch }}
 
   check:
-    needs: [plan, speak]
+    needs: [plan, label-global-news, speak-other-topics]
     # Also when nothing was left to read (a backup run), so a missed labelling is retried.
     if: always() && needs.plan.outputs.date != ''
     runs-on: ubuntu-latest
@@ -110,9 +167,6 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install boto3
-      # Today's app shows Listen only on articles the brief labels with an audioKey, and the brief
-      # goes out before the audio exists: add the labels now. Needs DATA_REPO_TOKEN (contents:write
-      # on will-diggle/bilinguist-data); without it this step does nothing.
       - name: Label the live brief with its audio
         env:
           DATA_REPO_TOKEN: ${{ secrets.DATA_REPO_TOKEN }}

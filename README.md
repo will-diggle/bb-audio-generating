@@ -15,16 +15,15 @@ MP3s to Cloudflare R2, where the app's Worker serves them (`/audio/{date}/{lang}
 ## How a run works
 
 1. **plan**: fetches today's brief from the Worker, drops articles that already have audio, and
-   splits the rest into up to 20 batches of equal size.
-2. **speak**: one job per batch, all at once. Each reads its articles aloud, encodes MP3 (mono,
-   48 kbps) and uploads to the `bilinguist-audio` bucket.
-3. **check**: confirms every article has its MP3 and deletes days older than 14 (R2's free tier is
-   10 GB). Runs after **label**.
-
-4. **label**: adds `audioKey` to every article of the live brief (`will-diggle/bilinguist-data`,
-   `latest.json` and `briefings/<date>.json`) whose MP3 is in R2, and bumps `generatedAt` so phones
-   re-download it. Today's app shows Listen only on labelled Global News articles. Nothing to add →
-   no commit.
+   splits the rest into two waves of up to 20 equal batches: **Global News first** (the only
+   articles today's app can play), then every other topic.
+2. **speak-global-news**: one job per batch, all at once.
+3. **label-global-news**: adds `audioKey` to every article of the live brief
+   (`will-diggle/bilinguist-data`, `latest.json` and `briefings/<date>.json`) whose MP3 is in R2,
+   and bumps `generatedAt` so phones re-download it. Listen appears on today's app here.
+4. **speak-other-topics**: the second wave, all at once.
+5. **check**: labels again, confirms every article has its MP3, and deletes days older than 14
+   (R2's free tier is 10 GB). Nothing to label → no commit.
 
 ## Secrets (Settings → Secrets and variables → Actions)
 
