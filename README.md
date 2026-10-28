@@ -19,13 +19,20 @@ MP3s to Cloudflare R2, where the app's Worker serves them (`/audio/{date}/{lang}
 2. **speak**: one job per batch, all at once. Each reads its articles aloud, encodes MP3 (mono,
    48 kbps) and uploads to the `bilinguist-audio` bucket.
 3. **check**: confirms every article has its MP3 and deletes days older than 14 (R2's free tier is
-   10 GB).
+   10 GB). Runs after **label**.
+
+4. **label**: adds `audioKey` to every article of the live brief (`will-diggle/bilinguist-data`,
+   `latest.json` and `briefings/<date>.json`) whose MP3 is in R2, and bumps `generatedAt` so phones
+   re-download it. Today's app shows Listen only on labelled Global News articles. Nothing to add →
+   no commit.
 
 ## Secrets (Settings → Secrets and variables → Actions)
 
-`R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`: the same R2 keys the main pipeline
-uses. Without them a run is a dry run: it reads everything aloud, uploads nothing, and reports the
-speed.
+- `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`: an R2 key with read and write on the
+  `bilinguist-audio` bucket. Without them a run is a dry run: it reads everything aloud, uploads
+  nothing, and reports the speed.
+- `DATA_REPO_TOKEN`: a fine-grained GitHub token with Contents read and write on
+  `will-diggle/bilinguist-data` only. Without it the label step does nothing.
 
 ## Run it locally
 

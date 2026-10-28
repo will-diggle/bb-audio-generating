@@ -99,7 +99,8 @@ jobs:
 
   check:
     needs: [plan, speak]
-    if: always() && needs.plan.outputs.matrix != '[]'
+    # Also when nothing was left to read (a backup run), so a missed labelling is retried.
+    if: always() && needs.plan.outputs.date != ''
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -109,6 +110,16 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install boto3
+      # Today's app shows Listen only on articles the brief labels with an audioKey, and the brief
+      # goes out before the audio exists: add the labels now. Needs DATA_REPO_TOKEN (contents:write
+      # on will-diggle/bilinguist-data); without it this step does nothing.
+      - name: Label the live brief with its audio
+        env:
+          DATA_REPO_TOKEN: ${{ secrets.DATA_REPO_TOKEN }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: python bb_audio.py label
       - name: Every article has audio? Delete old days
         env:
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}

@@ -257,6 +257,80 @@ def cmd_check(args) -> None:
         sys.exit(1)
 
 
+# ── Label ─────────────────────────────────────────────────────────────────────
+# The current app shows Listen only on an article that carries an `audioKey` (and only for Global
+# News). The brief is published before the audio exists, so once the audio is in R2 this adds the
+# key to every article that has its MP3, in both files the Worker may serve (they must stay
+# identical), and bumps generatedAt so phones re-download the brief. No change → no commit.
+
+DATA_REPO = "will-diggle/bilinguist-data"
+COMMIT_EMAIL = "81531349+will-diggle@users.noreply.github.com"  # GitHub rejects Will's private email
+
+
+def label_files(root: Path, have: set[str]) -> tuple[int, int]:
+    """Adds audioKey to every article whose MP3 is in `have`. Returns (added, global_news_added);
+    writes nothing when there is nothing to add."""
+    latest = root / "latest.json"
+    raw = latest.read_text(encoding="utf-8")
+    d = json.loads(raw)
+    dated = root / "briefings" / f"{d['date']}.json"
+    if not dated.exists() or dated.read_text(encoding="utf-8") != raw:
+        raise SystemExit("latest.json and today's briefings file differ: not touching either")
+    added = global_added = 0
+    for lang, level, length, a in articles(d):
+        if not a.get("slug"):
+            continue
+        key = f"{d['date']}/{lang}/{level}/{length}/{a['slug']}"
+        if f"{key}.mp3" in have and a.get("audioKey") != key:
+            a["audioKey"] = key
+            added += 1
+            global_added += a.get("genre") == "GLOBAL NEWS"
+    if added:
+        d["generatedAt"] = int(time.time() * 1000)
+        out = json.dumps(d, indent=2, ensure_ascii=False)
+        latest.write_text(out, encoding="utf-8")
+        dated.write_text(out, encoding="utf-8")
+    return added, global_added
+
+
+def git(*args: str, cwd: Path) -> str:
+    return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout
+
+
+def cmd_label(args) -> None:
+    token = (os.environ.get("DATA_REPO_TOKEN") or "").strip()
+    client = r2()
+    if not (token and client):
+        log("No DATA_REPO_TOKEN or R2 secrets: not labelling the brief.")
+        return
+    date = fetch_bundle().get("date") or ""
+    if date != today_utc():
+        log(f"The published brief is for {date}, not today: not labelling.")
+        return
+    have = existing_keys(client, date)
+    for attempt in range(3):  # someone else (the fact sweep) may push in between
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "data"
+            subprocess.run(["git", "clone", "-q", "--depth", "1", "--filter=blob:none", "--sparse",
+                            f"https://x-access-token:{token}@github.com/{DATA_REPO}.git", str(root)], check=True)
+            git("sparse-checkout", "set", "--no-cone", "/latest.json", f"/briefings/{date}.json", cwd=root)
+            added, global_added = label_files(root, have)
+            if not added:
+                log(f"{date}: every article with audio is already labelled.")
+                return
+            git("add", "latest.json", f"briefings/{date}.json", cwd=root)
+            git("-c", "user.name=BB audio", "-c", f"user.email={COMMIT_EMAIL}", "commit", "-q", "-m",
+                f"Audio {date}: Listen on {added} articles ({global_added} Global News)", cwd=root)
+            try:
+                git("push", "-q", "origin", "HEAD", cwd=root)
+                log(f"{date}: labelled {added} articles ({global_added} Global News) and bumped generatedAt")
+                return
+            except subprocess.CalledProcessError:
+                log(f"push rejected (attempt {attempt + 1}); someone else pushed, trying again")
+                time.sleep(10)
+    sys.exit("Could not push the labels after 3 attempts")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -271,6 +345,8 @@ def main() -> None:
     a.set_defaults(fn=cmd_speak)
     a = sub.add_parser("check")
     a.set_defaults(fn=cmd_check)
+    a = sub.add_parser("label")
+    a.set_defaults(fn=cmd_label)
     args = p.parse_args()
     args.fn(args)
 
