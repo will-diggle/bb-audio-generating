@@ -338,7 +338,9 @@ def cmd_label(args) -> None:
                 return
             git("add", "latest.json", f"briefings/{date}.json", cwd=root)
             git("-c", "user.name=BB audio", "-c", f"user.email={COMMIT_EMAIL}", "commit", "-q", "-m",
-                f"Audio {date}: Listen on {added} articles ({global_added} Global News)", cwd=root)
+                # [skip ci]: audio labels aren't a new brief, so bilinguist-data's push workflow (word
+                # routine + QA sweep) mustn't start for them (it did on 28 Oct).
+                f"Audio {date}: Listen on {added} articles ({global_added} Global News) [skip ci]", cwd=root)
             try:
                 git("push", "-q", "origin", "HEAD", cwd=root)
                 log(f"{date}: labelled {added} articles ({global_added} Global News) and bumped generatedAt")
