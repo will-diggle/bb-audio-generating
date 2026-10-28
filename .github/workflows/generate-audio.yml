@@ -1,0 +1,117 @@
+name: Generate audio
+
+# Reads every article of the day's brief aloud with Supertonic 3 (runs here, no API) and
+# saves the MP3s to Cloudflare R2. Started by the main pipeline ("brief-ready") once the
+# brief is published, with two scheduled runs as a backup. Every run skips articles that
+# already have audio, so extra runs cost nothing.
+on:
+  repository_dispatch:
+    types: [brief-ready]
+  schedule:
+    - cron: "45 6 * * *"
+    - cron: "30 8 * * *"
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Only this many articles (0 = all). A test run."
+        default: "0"
+      batches:
+        description: "Machines to split the work across (max 20)"
+        default: "20"
+
+concurrency:
+  group: bb-audio
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  SUPERTONIC_VERSION: "1.3.1"
+  BB_DATA_URL: ${{ vars.BB_DATA_URL || 'https://api.bilinguistbrief.com' }}
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      date: ${{ steps.plan.outputs.date }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      # The 385 MB model is downloaded once and cached, so the 20 speak jobs don't each fetch it.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/supertonic3
+          key: supertonic3-${{ env.SUPERTONIC_VERSION }}
+      - name: Warm the model cache
+        run: python -c "from supertonic import TTS; TTS(model='supertonic-3')"
+      - id: plan
+        name: Plan today's batches
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: python bb_audio.py plan --batches "${{ inputs.batches || 20 }}" --limit "${{ inputs.limit || 0 }}"
+      - uses: actions/upload-artifact@v4
+        if: steps.plan.outputs.matrix != '[]'
+        with:
+          name: plan
+          path: plan.json
+          retention-days: 2
+
+  speak:
+    needs: plan
+    if: needs.plan.outputs.matrix != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        batch: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: command -v ffmpeg || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+      - uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/supertonic3
+          key: supertonic3-${{ env.SUPERTONIC_VERSION }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: plan
+      - name: Read batch ${{ matrix.batch }} aloud
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: python bb_audio.py speak --batch ${{ matrix.batch }}
+
+  check:
+    needs: [plan, speak]
+    if: always() && needs.plan.outputs.matrix != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install boto3
+      - name: Every article has audio? Delete old days
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: python bb_audio.py check
