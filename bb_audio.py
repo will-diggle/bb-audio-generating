@@ -33,10 +33,11 @@ KEEP_DAYS = int(os.environ.get("BB_AUDIO_KEEP_DAYS") or 14)
 # Voices per language, alternating story by story (the same story keeps its voice at every level and
 # length). Supertonic 3's ten built-in voices: F1 Sarah, F2 Lily, F3 Jessica (broadcast announcer),
 # F4 Olivia, F5 Emily (British-sounding), M1 Alex, M2 James, M3 Robert (authoritative presenter),
-# M4 Sam, M5 Daniel. English is Emily only and German Alex only (Will, 28 Oct). Override with BB_VOICES='{"de": ["F4","M2"]}'.
+# M4 Sam, M5 Daniel. English is Emily only; German and French Alex only (Will, 28 Oct). Override with BB_VOICES='{"de": ["F4","M2"]}'.
 VOICES: dict[str, list[str]] = {lang: ["F3", "M3"] for lang in ("de", "fr", "es", "it", "pt", "sv", "hu", "tr", "ar")}
 VOICES["en"] = ["F5"]
 VOICES["de"] = ["M1"]  # Alex (Will, 28 Oct)
+VOICES["fr"] = ["M1"]  # Alex (Will, 28 Oct)
 VOICES.update(json.loads(os.environ.get("BB_VOICES") or "{}"))
 
 # Quality = refinement steps (2-16; the library default is 8). Speed 1.0 reads too fast for learners;
