@@ -1,9 +1,9 @@
 name: Generate audio
 
 # Reads every article of the day's brief aloud with Supertonic 3 (runs here, no API) and
-# saves the MP3s to Cloudflare R2. Started by the main pipeline ("brief-ready") once the
-# brief is published, with two scheduled runs as a backup. Every run skips articles that
-# already have audio, so extra runs cost nothing.
+# saves the MP3s to Cloudflare R2. Started by bilinguist-data's start-audio.yml ("brief-ready")
+# as soon as the brief lands on main, with two scheduled runs as a backup (GitHub runs them
+# hours late). Every run skips articles that already have audio, so extra runs cost nothing.
 #
 # Order: Global News on all machines first (the only articles today's app can play), then
 # label the live brief so Listen appears, then every other topic, then label again + check.
@@ -61,7 +61,7 @@ jobs:
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-        run: python bb_audio.py plan --batches "${{ inputs.batches || 20 }}" --limit "${{ inputs.limit || 0 }}"
+        run: python bb_audio.py plan --batches "${{ inputs.batches || 20 }}" --limit "${{ inputs.limit || 0 }}" --wait "${{ github.event_name == 'repository_dispatch' && 10 || 0 }}"
       - uses: actions/upload-artifact@v4
         if: steps.plan.outputs.date != ''
         with:
