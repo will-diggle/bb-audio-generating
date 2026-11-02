@@ -1,15 +1,19 @@
 name: Generate audio
 
-# Reads every article of the day's brief aloud with Supertonic 3 (runs here, no API) and
-# saves the MP3s to Cloudflare R2. Started by bilinguist-data's start-audio.yml ("brief-ready")
-# as soon as the brief lands on main, with two scheduled runs as a backup (GitHub runs them
-# hours late). Every run skips articles that already have audio, so extra runs cost nothing.
+# Reads every article of the day's brief aloud with Supertonic 3 (runs here, no API) and saves the
+# MP3s to Cloudflare R2, as soon as the other AIs have approved each article and never before (Will,
+# 2 Nov 2026). bilinguist-data's start-audio.yml starts it:
+#   "articles-approved": English native once it has passed its checks, then the other natives once
+#     they have passed theirs. So natives have audio the second the brief is published.
+#   "brief-ready": the final check has published the brief. Every level, and any native it changed.
+# Two scheduled runs are a backup (GitHub runs them hours late). Every run skips articles already read
+# from their current text, so extra runs cost nothing.
 #
-# Order: Global News on all machines first (the only articles today's app can play), then
-# label the live brief so Listen appears, then every other topic, then label again + check.
+# A publish run: label what's already read, Global News on all machines, label, every other topic,
+# label again + check.
 on:
   repository_dispatch:
-    types: [brief-ready]
+    types: [brief-ready, articles-approved]
   schedule:
     - cron: "45 6 * * *"
     - cron: "30 8 * * *"
@@ -41,6 +45,7 @@ jobs:
       gn_matrix: ${{ steps.plan.outputs.gn_matrix }}
       rest_matrix: ${{ steps.plan.outputs.rest_matrix }}
       date: ${{ steps.plan.outputs.date }}
+      source: ${{ steps.plan.outputs.source }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -61,7 +66,17 @@ jobs:
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-        run: python bb_audio.py plan --batches "${{ inputs.batches || 20 }}" --limit "${{ inputs.limit || 0 }}" --wait "${{ github.event_name == 'repository_dispatch' && 10 || 0 }}"
+          DATA_REPO_TOKEN: ${{ secrets.DATA_REPO_TOKEN }}
+        run: python bb_audio.py plan --batches "${{ inputs.batches || 20 }}" --limit "${{ inputs.limit || 0 }}" ${{ github.event.action == 'articles-approved' && '--approved' || (github.event.action == 'brief-ready' && '--wait 10' || '') }}
+      # Whatever the final check couldn't label in its own push (it was read just too late)
+      - name: Label what's already read
+        if: steps.plan.outputs.source == 'brief'
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          DATA_REPO_TOKEN: ${{ secrets.DATA_REPO_TOKEN }}
+        run: python bb_audio.py label
       - uses: actions/upload-artifact@v4
         if: steps.plan.outputs.date != ''
         with:
@@ -69,6 +84,7 @@ jobs:
           path: plan.json
           retention-days: 2
 
+  # On an "articles-approved" run, this wave is the approved articles
   speak-global-news:
     needs: plan
     if: needs.plan.outputs.gn_matrix != '[]' && needs.plan.outputs.gn_matrix != ''
@@ -94,17 +110,39 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: plan
-      - name: Read Global News batch ${{ matrix.batch }} aloud
+      - name: Read first-wave batch ${{ matrix.batch }} aloud
         env:
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          DATA_REPO_TOKEN: ${{ secrets.DATA_REPO_TOKEN }}
         run: python bb_audio.py speak --wave gn --batch ${{ matrix.batch }}
+
+  # Before the brief is published: tell the final check what's read, so Listen goes live with it
+  note-ready:
+    needs: [plan, speak-global-news]
+    if: always() && needs.plan.outputs.source == 'approved'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install boto3
+      - name: Tell the final check which approved articles are read
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          DATA_REPO_TOKEN: ${{ secrets.DATA_REPO_TOKEN }}
+        run: python bb_audio.py ready
 
   # Listen appears on today's app as soon as Global News is read, not after every topic.
   label-global-news:
     needs: [plan, speak-global-news]
-    if: always() && needs.plan.outputs.date != ''
+    if: always() && needs.plan.outputs.source == 'brief'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -152,12 +190,13 @@ jobs:
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          DATA_REPO_TOKEN: ${{ secrets.DATA_REPO_TOKEN }}
         run: python bb_audio.py speak --wave rest --batch ${{ matrix.batch }}
 
   check:
     needs: [plan, label-global-news, speak-other-topics]
     # Also when nothing was left to read (a backup run), so a missed labelling is retried.
-    if: always() && needs.plan.outputs.date != ''
+    if: always() && needs.plan.outputs.source == 'brief'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

@@ -1,10 +1,14 @@
 """Bilinguist Brief audio: reads every article of the day's brief aloud with Supertonic 3
 and saves the MP3s to Cloudflare R2, where the Worker's /audio route serves them.
 
-Runs on GitHub Actions in three steps (see .github/workflows/generate-audio.yml):
+Runs on GitHub Actions as soon as articles are approved, not before (Will, 2 Nov 2026): English
+native once it has passed its checks, the other natives once they have passed theirs, the levels
+once the final check publishes them. See .github/workflows/generate-audio.yml:
 
     python bb_audio.py plan  --batches 20         today's brief → plan.json: Global News wave, other wave
+    python bb_audio.py plan  --approved           the same for the articles approved so far
     python bb_audio.py speak --wave gn --batch 7  one batch: synthesise, encode, upload
+    python bb_audio.py ready                      tell the final check which approved articles are read
     python bb_audio.py label                      add audioKey to the live brief where the MP3 exists
     python bb_audio.py check                      every article has its MP3? + delete old days
 
@@ -15,6 +19,8 @@ Model: Supertonic 3 (Supertone, OpenRAIL-M; its 10 built-in voices only).
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import json
 import os
 import re
@@ -22,6 +28,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -84,6 +91,37 @@ def existing_keys(client, date: str) -> set[str]:
     return keys
 
 
+# ── The approved articles, on a private branch of bilinguist-data ─────────────
+# This repo is public, so their text never goes in its plan file: nobody may read them before the
+# brief is published. The pipeline writes queue.json; `ready` writes ready.json for the final check.
+
+QUEUE_BRANCH = "audio-queue"
+
+
+def _data_api(path: str, method: str = "GET", body: dict | None = None, raw: bool = False):
+    req = urllib.request.Request(
+        f"https://api.github.com/repos/{DATA_REPO}/contents/{path}", method=method,
+        data=json.dumps(body).encode() if body else None,
+        headers={"Authorization": f"Bearer {(os.environ.get('DATA_REPO_TOKEN') or '').strip()}",
+                 "Accept": "application/vnd.github.raw" if raw else "application/vnd.github+json",
+                 "User-Agent": "bb-audio-generating"})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        return json.load(resp)
+
+
+def fetch_queue() -> dict:
+    """{"date", "nativeJournalism"}: the articles approved so far, or {} if they can't be read."""
+    if not (os.environ.get("DATA_REPO_TOKEN") or "").strip():
+        return {}
+    for attempt in range(3):
+        try:
+            return _data_api(f"queue.json?ref={QUEUE_BRANCH}", raw=True)
+        except Exception as e:  # noqa: BLE001
+            log(f"Reading the approved articles failed ({e})")
+            time.sleep(5 * (attempt + 1))
+    return {}
+
+
 # ── Plan ──────────────────────────────────────────────────────────────────────
 
 def fetch_bundle() -> dict:
@@ -114,15 +152,43 @@ def articles(bundle: dict):
                 yield lang, "Native", length, a
 
 
+def _spoken(a: dict) -> str:
+    """Headline then body, in their audio versions, which have no spelled-out numbers ("Learjet
+    60 (sixty)" was read as written until 2 Nov 2026, on 302 of that day's 747 headlines)."""
+    return (f"{a.get('headlineAudio') or a.get('headline') or ''}. "
+            f"{a.get('bodyAudio') or a.get('body') or ''}").strip()
+
+
 def text_of(a: dict) -> str:
-    """Headline then the audio body, as the Google stage read it."""
-    return f"{a.get('headline') or ''}. {a.get('bodyAudio') or a.get('body') or ''}".strip().translate(PLAIN)
+    return _spoken(a).translate(PLAIN)
+
+
+def fingerprint(a: dict) -> str:
+    """Which text an article's audio was read from. Must match audio_queue.fingerprint in the
+    pipeline, which the final check uses (both repos test the same value)."""
+    return hashlib.sha256(_spoken(a).encode("utf-8")).hexdigest()[:12]
+
+
+# Beside each MP3 sits an empty file named `<key>.mp3.<fingerprint>`, so one listing says what
+# every MP3 was read from, and text fixed after it was read gets read again.
+_MARK = re.compile(r"\.mp3\.[0-9a-f]{12}$")
+
+
+def reader(have: set[str]):
+    """read(key, article): is this article's audio in R2, read from its current text? `have` is
+    a listing (existing_keys). An MP3 with no mark at all is from before marks, and counts."""
+    marked = {n.rsplit(".", 1)[0] for n in have if _MARK.search(n)}
+
+    def read(key: str, a: dict) -> bool:
+        mp3 = f"{key}.mp3"
+        return mp3 in have and (f"{mp3}.{fingerprint(a)}" in have or mp3 not in marked)
+    return read
 
 
 def cmd_plan(args) -> None:
     out = Path(os.environ.get("GITHUB_OUTPUT") or os.devnull)
-    bundle = fetch_bundle()
     want = args.date or today_utc()
+    bundle = fetch_queue() if args.approved else fetch_bundle()
     # Started by the publish itself (brief-ready), the Worker can serve the old brief for a minute
     deadline = time.time() + args.wait * 60
     while (bundle.get("date") or "") != want and time.time() < deadline:
@@ -131,40 +197,47 @@ def cmd_plan(args) -> None:
         bundle = fetch_bundle()
     date = bundle.get("date") or ""
     if date != want:
-        log(f"The published brief is for {date or 'no date'}, not {want}: nothing to do yet.")
+        log(f"The {'approved articles are' if args.approved else 'published brief is'} for "
+            f"{date or 'no date'}, not {want}: nothing to do yet.")
         with out.open("a") as f:
             f.write("gn_matrix=[]\nrest_matrix=[]\n")
         return
 
     # Each story keeps one voice everywhere; stories alternate between the language's two voices.
+    # The approved articles count too, so a story the final check leaves out can't shift the voices
+    # of the stories after it away from what their natives were read in.
+    queue = bundle if args.approved else fetch_queue()
     slugs: dict[str, list[str]] = {}
-    for lang, _, _, a in articles(bundle):
-        slugs.setdefault(lang, [])
-        if a.get("slug") and a["slug"] not in slugs[lang]:
-            slugs[lang].append(a["slug"])
+    for source in (bundle, queue if queue.get("date") == date else {}):
+        for lang, _, _, a in articles(source):
+            slugs.setdefault(lang, [])
+            if a.get("slug") and a["slug"] not in slugs[lang]:
+                slugs[lang].append(a["slug"])
     for lang in slugs:
         slugs[lang].sort()
 
     client = r2()
     done = existing_keys(client, date) if client else set()
+    read = reader(done)
     items, skipped = [], 0
     for lang, level, length, a in articles(bundle):
         slug, text = a.get("slug"), text_of(a)
         if not slug or len(text) < 3:
             continue
         key = f"{date}/{lang}/{level}/{length}/{slug}"
-        if f"{key}.mp3" in done:
+        if read(key, a):
             skipped += 1
             continue
         pair = VOICES.get(lang) or ["F3", "M3"]
         items.append({"key": key, "lang": lang, "voice": pair[slugs[lang].index(slug) % len(pair)], "text": text,
-                      "genre": (a.get("genre") or "").upper()})
+                      "genre": (a.get("genre") or "").upper(), "mark": fingerprint(a),
+                      "stale": [n for n in done if n.startswith(f"{key}.mp3.")]})
     if args.limit:
         items = items[: args.limit]
 
-    # Two waves: Global News first (the only articles today's app can play, labelled as soon as they
-    # are read), then everything else. Within a wave: longest first into the lightest batch, so the
-    # batches finish together.
+    # Two waves: Global News first (labelled as soon as they are read), then everything else; the
+    # approved articles go in one, to be read before the brief is published. Within a wave: longest
+    # first into the lightest batch, so the batches finish together.
     def split(wave: list[dict]) -> list[list[dict]]:
         n = max(1, min(args.batches, len(wave)))
         batches: list[list[dict]] = [[] for _ in range(n)]
@@ -175,18 +248,25 @@ def cmd_plan(args) -> None:
             sizes[b] += len(it["text"])
         return [b for b in batches if b]
 
-    waves = {"gn": split([i for i in items if i["genre"] == "GLOBAL NEWS"]),
-             "rest": split([i for i in items if i["genre"] != "GLOBAL NEWS"])}
-    PLAN.write_text(json.dumps({"date": date, "waves": waves}, ensure_ascii=False))
-    for name, label in (("gn", "Global News"), ("rest", "other topics")):
+    if args.approved:
+        waves = {"gn": split(items), "rest": []}
+    else:
+        waves = {"gn": split([i for i in items if i["genre"] == "GLOBAL NEWS"]),
+                 "rest": split([i for i in items if i["genre"] != "GLOBAL NEWS"])}
+    for name, label in (("gn", "Approved" if args.approved else "Global News"), ("rest", "other topics")):
         wave = [i for b in waves[name] for i in b]
         log(f"{date} {label}: {len(wave)} articles ({sum(len(i['text']) for i in wave):,} characters) "
             f"in {len(waves[name])} batches")
     log(f"{skipped} already in R2")
+    if args.approved:  # the speak jobs read the text from the private branch
+        for i in items:
+            del i["text"]
+    PLAN.write_text(json.dumps({"date": date, "approved": args.approved, "waves": waves}, ensure_ascii=False))
     with out.open("a") as f:
         f.write(f"gn_matrix={json.dumps(list(range(len(waves['gn']))))}\n")
         f.write(f"rest_matrix={json.dumps(list(range(len(waves['rest']))))}\n")
         f.write(f"date={date}\n")
+        f.write(f"source={'approved' if args.approved else 'brief'}\n")
 
 
 # ── Speak ─────────────────────────────────────────────────────────────────────
@@ -194,6 +274,10 @@ def cmd_plan(args) -> None:
 def cmd_speak(args) -> None:
     plan = json.loads(PLAN.read_text())
     batch = plan["waves"][args.wave][args.batch]
+    approved = {}
+    if plan.get("approved"):
+        approved = {f"{plan['date']}/{lang}/{level}/{length}/{a.get('slug')}": text_of(a)
+                    for lang, level, length, a in articles(fetch_queue())}
     from supertonic import TTS
     tts = TTS(model="supertonic-3")
     styles: dict[str, object] = {}
@@ -203,8 +287,10 @@ def cmd_speak(args) -> None:
     start = time.time()
 
     for it in batch:
-        text = it["text"]
+        text = it["text"] = it.get("text") or approved.get(it["key"]) or ""
         try:
+            if not text:
+                raise ValueError("no text for this article")
             style = styles.get(it["voice"]) or styles.setdefault(it["voice"], tts.get_voice_style(it["voice"]))
             while True:
                 try:
@@ -225,6 +311,9 @@ def cmd_speak(args) -> None:
                 body = mp3_path.read_bytes()
             if client:
                 client.put_object(Bucket=BUCKET, Key=f"{it['key']}.mp3", Body=body, ContentType="audio/mpeg")
+                for old in it.get("stale") or []:
+                    client.delete_object(Bucket=BUCKET, Key=old)
+                client.put_object(Bucket=BUCKET, Key=f"{it['key']}.mp3.{it['mark']}", Body=b"")
             else:  # dry run: keep the file locally to listen to
                 local = Path("out") / f"{it['key']}.mp3"
                 local.parent.mkdir(parents=True, exist_ok=True)
@@ -253,9 +342,10 @@ def cmd_check(args) -> None:
     bundle = fetch_bundle()
     date = bundle.get("date") or today_utc()
     have = existing_keys(client, date)
-    expected = {f"{date}/{lang}/{level}/{length}/{a['slug']}.mp3"
+    expected = {f"{date}/{lang}/{level}/{length}/{a['slug']}": a
                 for lang, level, length, a in articles(bundle) if a.get("slug")}
-    missing = sorted(expected - have)
+    read = reader(have)
+    missing = sorted(f"{key}.mp3" for key, a in expected.items() if not read(key, a))
     summary = f"{date}: {len(expected) - len(missing)} of {len(expected)} articles have audio"
     log(summary)
     for k in missing[:20]:
@@ -301,11 +391,12 @@ def label_files(root: Path, have: set[str]) -> tuple[int, int]:
     if not dated.exists() or dated.read_text(encoding="utf-8") != raw:
         raise SystemExit("latest.json and today's briefings file differ: not touching either")
     added = global_added = 0
+    read = reader(have)
     for lang, level, length, a in articles(d):
         if not a.get("slug"):
             continue
         key = f"{d['date']}/{lang}/{level}/{length}/{a['slug']}"
-        if f"{key}.mp3" in have and a.get("audioKey") != key:
+        if read(key, a) and a.get("audioKey") != key:
             a["audioKey"] = key
             added += 1
             global_added += a.get("genre") == "GLOBAL NEWS"
@@ -357,6 +448,47 @@ def cmd_label(args) -> None:
     sys.exit("Could not push the labels after 3 attempts")
 
 
+# ── Ready ─────────────────────────────────────────────────────────────────────
+
+def cmd_ready(args) -> None:
+    """Tell the final check which approved articles have their audio, and from which text, so
+    it can put Listen on them in the same push that publishes the brief. If this is late or
+    fails, the first step of the run the publish starts labels them instead."""
+    client, queue = r2(), fetch_queue()
+    date = queue.get("date") or ""
+    if not client or date != today_utc():
+        log(f"Nothing to tell the final check (approved articles for {date or 'no date'}).")
+        return
+    if set(queue.get("nativeJournalism") or {}) <= {"en"}:
+        # Only the English so far. The other natives are minutes away, and every push to
+        # bilinguist-data starts the fact sweep routine, so wait and say it all once.
+        log("Only the English is approved so far: nothing to tell the final check yet.")
+        return
+    read = reader(existing_keys(client, date))
+    done = {}
+    for lang, level, length, a in articles(queue):
+        key = f"{date}/{lang}/{level}/{length}/{a.get('slug')}"
+        if read(key, a):
+            done[key] = fingerprint(a)
+    content = base64.b64encode(json.dumps({"date": date, "read": done}).encode()).decode()
+    for attempt in range(3):
+        try:
+            try:
+                sha = {"sha": _data_api(f"ready.json?ref={QUEUE_BRANCH}")["sha"]}
+            except urllib.error.HTTPError as e:
+                if e.code != 404:
+                    raise
+                sha = {}
+            _data_api("ready.json", "PUT", {"message": f"Audio ready {date}: {len(done)} articles",
+                                            "branch": QUEUE_BRANCH, "content": content, **sha})
+            log(f"{date}: told the final check {len(done)} approved articles have audio")
+            return
+        except Exception as e:  # noqa: BLE001
+            log(f"Saving ready.json failed ({e}); trying again")
+            time.sleep(5 * (attempt + 1))
+    log("Could not save ready.json: the publish run labels these articles instead")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -365,6 +497,7 @@ def main() -> None:
     a.add_argument("--date", default="")
     a.add_argument("--limit", type=int, default=0, help="only this many articles (a test run)")
     a.add_argument("--wait", type=float, default=0, help="minutes to wait for today's brief to be served")
+    a.add_argument("--approved", action="store_true", help="the articles approved so far, not the published brief")
     a.set_defaults(fn=cmd_plan)
     a = sub.add_parser("speak")
     a.add_argument("--wave", choices=["gn", "rest"], required=True)
@@ -375,6 +508,8 @@ def main() -> None:
     a.set_defaults(fn=cmd_check)
     a = sub.add_parser("label")
     a.set_defaults(fn=cmd_label)
+    a = sub.add_parser("ready")
+    a.set_defaults(fn=cmd_ready)
     args = p.parse_args()
     args.fn(args)
 
