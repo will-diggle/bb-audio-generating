@@ -9,16 +9,27 @@ MP3s to Cloudflare R2, where the app's Worker serves them (`/audio/{date}/{lang}
 - **Voices:** English is Emily (F5); German (speed 0.95) and French are Alex (M1). The other languages alternate Jessica (F3) and Robert (M3) story
   by story. Speed 0.92, quality 12 steps. All are set at the top of `bb_audio.py`, or by the
   `BB_VOICES`, `BB_TTS_SPEED` and `BB_TTS_STEPS` environment variables.
-- **When it runs:** as soon as the brief lands on `main` in `will-diggle/bilinguist-data`, whose
-  `start-audio.yml` sends `brief-ready` (it needs that repo's `AUDIO_TRIGGER_TOKEN` secret, a
-  fine-grained token with Contents read and write on this repo only). Also at 06:45 and 08:30 UTC
-  as a backup, which GitHub runs hours late. Articles that already have audio are skipped.
+- **When it runs:** as soon as the other AIs have approved each article, never before. The pipeline
+  writes the approved articles to `queue.json` on the private `audio-queue` branch of
+  `will-diggle/bilinguist-data`, and that repo's `start-audio.yml` starts a run (`articles-approved`):
+  English native once it has passed its checks, then the other natives once they have passed theirs.
+  The final check's publish starts the levels (`brief-ready`). It needs that repo's
+  `AUDIO_TRIGGER_TOKEN` secret, a fine-grained token with Contents read and write on this repo only.
+  Runs at 06:45 and 08:30 UTC are a backup, which GitHub runs hours late.
+- **What gets read again:** each MP3 has an empty file beside it, `<key>.mp3.<fingerprint>`, naming the
+  text it was read from. An article whose text has changed since is read again; others are skipped.
 
 ## How a run works
 
-1. **plan**: fetches today's brief from the Worker, drops articles that already have audio, and
-   splits the rest into two waves of up to 20 equal batches: **Global News first** (the only
-   articles today's app can play), then every other topic.
+An `articles-approved` run reads what's approved from the private branch, in one wave (their text is
+never put in this public repo's files), then saves `ready.json` there. The final check uses that to
+put Listen on them in the same push that publishes the brief.
+
+A `brief-ready` run:
+
+1. **plan**: fetches today's brief from the Worker, drops articles already read from their current
+   text, labels what's already read, and splits the rest into two waves of up to 20 equal batches:
+   **Global News first**, then every other topic.
 2. **speak-global-news**: one job per batch, all at once.
 3. **label-global-news**: adds `audioKey` to every article of the live brief
    (`will-diggle/bilinguist-data`, `latest.json` and `briefings/<date>.json`) whose MP3 is in R2,
