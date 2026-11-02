@@ -9,8 +9,10 @@ MP3s to Cloudflare R2, where the app's Worker serves them (`/audio/{date}/{lang}
 - **Voices:** English is Emily (F5); German (speed 0.95) and French are Alex (M1). The other languages alternate Jessica (F3) and Robert (M3) story
   by story. Speed 0.92, quality 12 steps. All are set at the top of `bb_audio.py`, or by the
   `BB_VOICES`, `BB_TTS_SPEED` and `BB_TTS_STEPS` environment variables.
-- **When it runs:** when the main pipeline sends `brief-ready`, plus at 06:45 and 08:30 UTC as a
-  backup. Articles that already have audio are skipped.
+- **When it runs:** as soon as the brief lands on `main` in `will-diggle/bilinguist-data`, whose
+  `start-audio.yml` sends `brief-ready` (it needs that repo's `AUDIO_TRIGGER_TOKEN` secret, a
+  fine-grained token with Contents read and write on this repo only). Also at 06:45 and 08:30 UTC
+  as a backup, which GitHub runs hours late. Articles that already have audio are skipped.
 
 ## How a run works
 

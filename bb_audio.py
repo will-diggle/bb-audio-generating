@@ -122,8 +122,14 @@ def text_of(a: dict) -> str:
 def cmd_plan(args) -> None:
     out = Path(os.environ.get("GITHUB_OUTPUT") or os.devnull)
     bundle = fetch_bundle()
-    date = bundle.get("date") or ""
     want = args.date or today_utc()
+    # Started by the publish itself (brief-ready), the Worker can serve the old brief for a minute
+    deadline = time.time() + args.wait * 60
+    while (bundle.get("date") or "") != want and time.time() < deadline:
+        log(f"The Worker is still serving {bundle.get('date')}; waiting for {want}")
+        time.sleep(30)
+        bundle = fetch_bundle()
+    date = bundle.get("date") or ""
     if date != want:
         log(f"The published brief is for {date or 'no date'}, not {want}: nothing to do yet.")
         with out.open("a") as f:
@@ -358,6 +364,7 @@ def main() -> None:
     a.add_argument("--batches", type=int, default=20)
     a.add_argument("--date", default="")
     a.add_argument("--limit", type=int, default=0, help="only this many articles (a test run)")
+    a.add_argument("--wait", type=float, default=0, help="minutes to wait for today's brief to be served")
     a.set_defaults(fn=cmd_plan)
     a = sub.add_parser("speak")
     a.add_argument("--wave", choices=["gn", "rest"], required=True)
