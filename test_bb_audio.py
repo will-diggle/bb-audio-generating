@@ -64,6 +64,7 @@ class Base(unittest.TestCase):
         with mock.patch.object(A, "r2", lambda: r2), mock.patch.object(A, "today_utc", lambda: DATE), \
                 mock.patch.object(A, "existing_keys", lambda c, d: set(c.names)), \
                 mock.patch.object(A, "fetch_bundle", lambda: bundle or brief()), \
+                mock.patch.object(A, "make_saved_parts", lambda *a: None), \
                 mock.patch.object(A, "fetch_queue", lambda: q if q is not None else queue()), \
                 mock.patch.object(A, "log"):
             A.cmd_plan(NS(date="", wait=0, batches=20, limit=0, approved=approved))
