@@ -180,14 +180,15 @@ class PlayAllTest(Base):
             self.assertEqual(len(P.MONTHS[lang]), 12, lang)
             self.assertEqual(len(P.DAYS[lang]), 31, lang)
             self.assertEqual(set(P.TITLES[lang]), set(P.TOPICS), lang)
-            self.assertIn("Bilinguist Brief", P.greeting(lang, DATE, "morning"), lang)
+            self.assertIn("Bilinguist Brief", P.HEADLINES[lang], lang)
+            self.assertEqual(len(P.saved_lines(lang)), 5, lang)
 
     def test_the_greeting_says_the_time_and_the_day(self):
-        self.assertEqual(P.greeting("en", DATE, "evening"),
-                         "Good evening. Today is Tuesday the third of November, and here are Bilinguist Brief's top stories.")
-        self.assertIn("Dienstag, der dritte November", P.greeting("de", DATE, "morning"))
-        self.assertIn("treinta y uno de diciembre", P.greeting("es", "2026-12-31", "morning"))
-        self.assertIn("vinte e cinco de dezembro", P.greeting("pt", "2026-12-25", "morning"))
+        self.assertEqual(P.greeting_line("en", "evening"), "Good evening.")
+        self.assertEqual(P.day_line("en", DATE), "Today is Tuesday the third of November.")
+        self.assertIn("Dienstag, der dritte November", P.day_line("de", DATE))
+        self.assertIn("treinta y uno de diciembre", P.day_line("es", "2026-12-31"))
+        self.assertIn("vinte e cinco de dezembro", P.day_line("pt", "2026-12-25"))
 
     def test_each_edition_gets_its_own_global_news_headlines(self):
         heads = A.intro_headlines(self.bundle())
@@ -244,6 +245,16 @@ class PlayAllTest(Base):
         self.assertEqual(len(saved), 6)
         self.assertGreater(len(saved["k/_play-all-morning"]), len(saved["k/_play-all-morning-no-title"]))
         self.assertEqual(said.count("Global News"), 1)
+        self.assertEqual(said.count("Today is Tuesday the third of November."), 1)
+        self.assertEqual(said.count("Here are today's Bilinguist Brief headlines."), 1)
+
+    def test_shared_lines_keep_where_they_belong(self):
+        self.assertEqual(A.saved_part_key(P.day_line("en", DATE), "en", DATE), f"{DATE}/en/_play-all-day.f32")
+        key = A.saved_part_key(P.HEADLINES["en"], "en", DATE)
+        self.assertTrue(key.startswith("play-all/en/parts/"))
+        self.assertTrue(A.expired("2026-11-01/en/_play-all-day.f32", "2026-10-20", "2026-11-02"))
+        self.assertFalse(A.expired(key, "2026-10-20", "2026-11-02"))
+        self.assertIsNone(A.saved_part(FakeR2(), "A headline.", "en", DATE))     # a headline is never saved
 
     @unittest.skipUnless(np, "needs numpy")
     def test_the_music_comes_first_and_is_gone_at_the_end(self):

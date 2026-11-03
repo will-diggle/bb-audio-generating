@@ -1,8 +1,9 @@
 """The spoken parts of Play all (Will, 3 Nov 2026), in the brief's language.
 
-Each edition (language, level, length) gets an intro: the greeting, the day, that edition's Global
-News headlines and the title "Global News", over news music that fades out as the first article
-starts. There is one for each time of day, and each has a version with no title, for a reader
+Each edition (language, level, length) gets an intro: the greeting, the day, a line introducing the
+headlines, that edition's Global News headlines and the title "Global News", over news music that
+fades out as the first article starts. Everything but the day and the headlines is read once and
+saved. There is one for each time of day, and each has a version with no title, for a reader
 whose brief doesn't start with Global News. Each language also gets one short title per topic,
 played before that topic's articles. See "Play all" in the README for the files and how to use them.
 """
@@ -12,8 +13,8 @@ from datetime import datetime
 
 TIMES = ("morning", "afternoon", "evening")
 
-# Bump when the music in R2 changes, so every intro is made again
-MUSIC_VERSION = "1"
+# Bump when these words or the music in R2 change, so every intro is made again
+INTRO_VERSION = "2"
 
 GREETINGS = {
     "en": ("Good morning", "Good afternoon", "Good evening"),
@@ -27,13 +28,23 @@ GREETINGS = {
 
 # {weekday}, {day}, {month}. Days are written out, so each language's voice says them properly.
 TODAY = {
-    "en": "Today is {weekday} the {day} of {month}, and here are Bilinguist Brief's top stories.",
-    "de": "Heute ist {weekday}, der {day} {month}, und hier sind die wichtigsten Meldungen von Bilinguist Brief.",
-    "fr": "Nous sommes le {weekday} {day} {month}, et voici les grands titres de Bilinguist Brief.",
-    "es": "Hoy es {weekday}, {day} de {month}, y estas son las noticias principales de Bilinguist Brief.",
-    "it": "Oggi è {weekday} {day} {month}, e queste sono le notizie principali di Bilinguist Brief.",
-    "pt": "Hoje é {weekday}, {day} de {month}, e estas são as principais notícias do Bilinguist Brief.",
-    "sv": "Idag är det {weekday} den {day} {month}, och här är Bilinguist Briefs viktigaste nyheter.",
+    "en": "Today is {weekday} the {day} of {month}.",
+    "de": "Heute ist {weekday}, der {day} {month}.",
+    "fr": "Nous sommes le {weekday} {day} {month}.",
+    "es": "Hoy es {weekday}, {day} de {month}.",
+    "it": "Oggi è {weekday} {day} {month}.",
+    "pt": "Hoje é {weekday}, {day} de {month}.",
+    "sv": "Idag är det {weekday} den {day} {month}.",
+}
+
+HEADLINES = {
+    "en": "Here are today's Bilinguist Brief headlines.",
+    "de": "Hier sind die heutigen Schlagzeilen von Bilinguist Brief.",
+    "fr": "Voici les titres du jour de Bilinguist Brief.",
+    "es": "Estos son los titulares de hoy de Bilinguist Brief.",
+    "it": "Ecco i titoli di oggi di Bilinguist Brief.",
+    "pt": "Estas são as manchetes de hoje do Bilinguist Brief.",
+    "sv": "Här är dagens rubriker från Bilinguist Brief.",
 }
 
 WEEKDAYS = {  # Monday first
@@ -103,11 +114,20 @@ TITLES = {
 }
 
 
-def greeting(lang: str, date: str, time: str) -> str:
+def greeting_line(lang: str, time: str) -> str:
+    return f"{GREETINGS[lang][TIMES.index(time)]}."
+
+
+def day_line(lang: str, date: str) -> str:
     d = datetime.strptime(date, "%Y-%m-%d")
-    day = DAYS[lang][d.day - 1].replace("_", " ")
-    today = TODAY[lang].format(weekday=WEEKDAYS[lang][d.weekday()], day=day, month=MONTHS[lang][d.month - 1])
-    return f"{GREETINGS[lang][TIMES.index(time)]}. {today}"
+    return TODAY[lang].format(weekday=WEEKDAYS[lang][d.weekday()], day=DAYS[lang][d.day - 1].replace("_", " "),
+                              month=MONTHS[lang][d.month - 1])
+
+
+def saved_lines(lang: str) -> list[str]:
+    """The lines every intro in a language shares, whatever the day (Will, 3 Nov 2026: read once
+    and saved, not read again for each edition)."""
+    return [greeting_line(lang, t) for t in TIMES] + [HEADLINES[lang], TITLES[lang]["GLOBAL NEWS"]]
 
 
 def as_sentence(headline: str) -> str:

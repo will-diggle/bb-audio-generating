@@ -243,6 +243,8 @@ def cmd_plan(args) -> None:
         more, already = play_all_items(bundle, date, read, done)
         items += more
         skipped += already
+        if client and any(i.get("intro") for i in more):
+            make_saved_parts(client, date, {i["lang"] for i in more if i.get("intro")}, done)
 
     # Two waves: Global News first (labelled as soon as they are read), then everything else; the
     # approved articles go in one, to be read before the brief is published. Within a wave: longest
@@ -288,7 +290,7 @@ LAST_INTRO = f"-{play_all.TIMES[-1]}-no-title"
 INTRO_LEAD, INTRO_TAIL = 2.5, 3.0     # seconds of music alone before the voice and after it
 MUSIC_LOUDNESS = 0.1                  # any track is brought to this (RMS), so a new one sits the same
 MUSIC_ALONE, MUSIC_UNDER = 0.7, 0.1   # alone it's about as loud as the voice, under it about 15 dB below
-GAPS = {"greeting": 0.55, "headline": 0.65, "title": 0.75}
+GAPS = {"greeting": 0.25, "lead-in": 0.55, "headline": 0.65, "title": 0.75}
 
 
 def intro_key(date: str, lang: str, level: str, length: str) -> str:
@@ -297,7 +299,7 @@ def intro_key(date: str, lang: str, level: str, length: str) -> str:
 
 def intro_article(text: str) -> dict:
     """What an intro's fingerprint is taken from: its headlines and the music."""
-    return {"bodyAudio": f"{play_all.MUSIC_VERSION}\n{text}"}
+    return {"bodyAudio": f"{play_all.INTRO_VERSION}\n{text}"}
 
 
 def intro_headlines(bundle: dict) -> dict:
@@ -334,6 +336,63 @@ def play_all_items(bundle: dict, date: str, read, done: set[str]) -> tuple[list[
                           "genre": "GLOBAL NEWS", "mark": fingerprint(a),
                           "stale": [n for n in done if n.startswith(f"{key}.mp3.")]})
     return items, skipped
+
+
+def saved_part_key(line: str, lang: str, date: str) -> str:
+    """Where a shared line's samples are kept: the day's line goes with the day's files, and the
+    rest stay. The voice and its settings are in the name, as the samples depend on them."""
+    if line == play_all.day_line(lang, date):
+        return f"{date}/{lang}/_play-all-day.f32"
+    voice = (VOICES.get(lang) or ["F3"])[0]
+    made_with = f"{line}|{voice}|{STEPS}|{SPEED_BY_LANG.get(lang, SPEED)}"
+    return f"{TITLES_FOLDER}/{lang}/parts/{hashlib.sha256(made_with.encode()).hexdigest()[:12]}.f32"
+
+
+def make_saved_parts(client, date: str, langs: set[str], done: set[str]) -> None:
+    """Before the machines start: read today's day line and any shared line not saved yet, once
+    per language. If this fails, each machine reads what it needs."""
+    try:
+        missing = [(lang, line) for lang in sorted(langs)
+                   for line in [*play_all.saved_lines(lang), play_all.day_line(lang, date)]
+                   if saved_part_key(line, lang, date) not in done]
+        if not missing:
+            return
+        from supertonic import TTS
+        tts, styles = TTS(model="supertonic-3"), {}
+        for lang, line in missing:
+            voice = (VOICES.get(lang) or ["F3"])[0]
+            samples = synthesize(tts, styles, line, voice, lang, STEPS).reshape(-1).astype("float32")
+            client.put_object(Bucket=BUCKET, Key=saved_part_key(line, lang, date), Body=samples.tobytes())
+        log(f"Saved {len(missing)} shared intro lines")
+    except Exception as e:  # noqa: BLE001
+        log(f"Shared intro lines not saved in advance: {e}")
+
+
+def saved_part(client, line: str, lang: str, date: str):
+    """A shared line's samples from R2, or None."""
+    if not client or line not in [*play_all.saved_lines(lang), play_all.day_line(lang, date)]:
+        return None
+    try:
+        import numpy as np
+        body = client.get_object(Bucket=BUCKET, Key=saved_part_key(line, lang, date))["Body"].read()
+        return np.frombuffer(body, dtype=np.float32)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def synthesize(tts, styles: dict, text: str, voice: str, lang: str, steps: int):
+    style = styles.get(voice) or styles.setdefault(voice, tts.get_voice_style(voice))
+    while True:
+        try:
+            wav, _ = tts.synthesize(text, voice_style=style, lang=lang, total_steps=steps,
+                                    speed=SPEED_BY_LANG.get(lang, SPEED))
+            return wav
+        except ValueError as e:  # a character the model can't read: say nothing for it
+            bad = re.findall(r"'(.)'", str(e))
+            if not bad:
+                raise
+            for ch in bad:
+                text = text.replace(ch, " ")
 
 
 def news_music(client, rate: int):
@@ -381,8 +440,10 @@ def read_intros(it: dict, date: str, say, music, rate: int, save) -> None:
     for line in it["text"].split("\n"):
         headlines += [say(line), gap("headline")]
     title = say(play_all.TITLES[lang]["GLOBAL NEWS"])
+    today = [gap("greeting"), say(play_all.day_line(lang, date)), gap("greeting"),
+             say(play_all.HEADLINES[lang]), gap("lead-in")]
     for time in play_all.TIMES:
-        opening = [say(play_all.greeting(lang, date, time)), gap("greeting")]
+        opening = [say(play_all.greeting_line(lang, time)), *today]
         save(f"{it['key']}-{time}", over_music(np.concatenate([*opening, *headlines[:-1], gap("title"), title]), music, rate))
         save(f"{it['key']}-{time}-no-title", over_music(np.concatenate([*opening, *headlines[:-1]]), music, rate))
 
@@ -406,31 +467,21 @@ def cmd_speak(args) -> None:
     audio_secs = 0.0
     start = time.time()
 
-    def synthesize(text: str, it: dict):
-        style = styles.get(it["voice"]) or styles.setdefault(it["voice"], tts.get_voice_style(it["voice"]))
-        while True:
-            try:
-                wav, _ = tts.synthesize(text, voice_style=style, lang=it["lang"], total_steps=args.steps,
-                                        speed=SPEED_BY_LANG.get(it["lang"], SPEED))
-                return wav
-            except ValueError as e:  # a character the model can't read: say nothing for it
-                bad = re.findall(r"'(.)'", str(e))
-                if not bad:
-                    raise
-                for ch in bad:
-                    text = text.replace(ch, " ")
-
     music = None
     if any(it.get("intro") for it in batch):
         music = news_music(client, tts.sample_rate)
 
-    def read_intro_item(it: dict) -> None:
-        said: dict[str, object] = {}
+    said: dict[tuple[str, str], object] = {}
 
+    def read_intro_item(it: dict) -> None:
         def say(line: str):
-            if line not in said:
-                said[line] = synthesize(line, it).reshape(-1).astype("float32")
-            return said[line]
+            key = (it["lang"], line)
+            if key not in said:
+                part = saved_part(client, line, it["lang"], plan["date"])
+                if part is None:
+                    part = synthesize(tts, styles, line, it["voice"], it["lang"], args.steps).reshape(-1).astype("float32")
+                said[key] = part
+            return said[key]
 
         def save(key: str, samples) -> None:
             with tempfile.TemporaryDirectory() as tmp:
@@ -462,7 +513,7 @@ def cmd_speak(args) -> None:
                 ok += 1
                 chars += len(text)
                 continue
-            wav = synthesize(text, it)
+            wav = synthesize(tts, styles, text, it["voice"], it["lang"], args.steps)
             with tempfile.TemporaryDirectory() as tmp:
                 wav_path, mp3_path = Path(tmp) / "a.wav", Path(tmp) / "a.mp3"
                 tts.save_audio(wav, str(wav_path))
