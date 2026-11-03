@@ -81,6 +81,8 @@ change day to day.
 4. Skip the intro if the brief's date isn't the reader's date today, as it says the day. Intros are
    deleted a day after their date.
 5. A missing file (404) is skipped: the rest plays as normal.
+6. The intro and titles aren't stories: leave them out of "1 of 11" and of what counts as heard for the
+   streak, and don't give them their own Listen button.
 
 The website's `/api/audio` route needs a pass for these keys too, as it does for `audioKey`.
 
