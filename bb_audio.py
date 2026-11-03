@@ -244,7 +244,7 @@ def cmd_plan(args) -> None:
         items += more
         skipped += already
         if client and any(i.get("intro") for i in more):
-            make_saved_parts(client, date, {i["lang"] for i in more if i.get("intro")}, done)
+            make_saved_parts(client, date, {i["lang"] for i in more if i.get("intro")} | {"en"}, done)
 
     # Two waves: Global News first (labelled as soon as they are read), then everything else; the
     # approved articles go in one, to be read before the brief is published. Within a wave: longest
@@ -290,6 +290,7 @@ TITLES_FOLDER = "play-all"
 # on its own (Pixabay's licence bans standalone distribution)
 MUSIC_KEY = f"{TITLES_FOLDER}/news-music.track"
 LAST_INTRO = f"-{play_all.TIMES[-1]}-no-title"
+FREE_LENGTH = "short"                 # the only edition a free reader gets
 INTRO_LEAD, INTRO_TAIL = 2.5, 3.0     # seconds of music alone before the voice and after it
 MUSIC_LOUDNESS = 0.1                  # any track is brought to this (RMS), so a new one sits the same
 MUSIC_ALONE, MUSIC_UNDER = 0.7, 0.1   # alone it's about as loud as the voice, under it about 15 dB below
@@ -445,7 +446,8 @@ def over_music(voice, music, rate: int):
 
 
 def read_intros(it: dict, date: str, say, music, rate: int, save) -> None:
-    """Make an edition's six intro files, ending with the one that says it's done."""
+    """Make an edition's intro files, ending with the one that says it's done. A free reader only
+    gets the concise edition, so only that has an intro for them."""
     import numpy as np
     gap = lambda name: np.zeros(int(GAPS[name] * rate), dtype=np.float32)
     lang = it["lang"]
@@ -453,11 +455,14 @@ def read_intros(it: dict, date: str, say, music, rate: int, save) -> None:
     for line in it["text"].split("\n"):
         headlines += [say(line), gap("headline")]
     title = say(play_all.intro_title(lang))
+    message = say(play_all.FREE_MESSAGE, "en") if f"/{FREE_LENGTH}/" in it["key"] else None
     today = [gap("greeting"), say(play_all.day_line(lang, date)), gap("greeting"),
              say(play_all.HEADLINES[lang]), gap("lead-in")]
     for time in play_all.TIMES:
         opening = [say(play_all.greeting_line(lang, time)), *today]
         save(f"{it['key']}-{time}", over_music(np.concatenate([*opening, *headlines[:-1], gap("title"), title]), music, rate))
+        if message is not None:
+            save(f"{it['key']}-{time}-free", over_music(np.concatenate([*opening, *headlines[:-1], gap("title"), message]), music, rate))
         save(f"{it['key']}-{time}-no-title", over_music(np.concatenate([*opening, *headlines[:-1]]), music, rate))
 
 
@@ -487,12 +492,14 @@ def cmd_speak(args) -> None:
     said: dict[tuple[str, str], object] = {}
 
     def read_intro_item(it: dict) -> None:
-        def say(line: str):
-            key = (it["lang"], line)
+        def say(line: str, lang: str | None = None):
+            lang = lang or it["lang"]
+            key = (lang, line)
             if key not in said:
-                part = saved_part(client, line, it["lang"], plan["date"])
+                part = saved_part(client, line, lang, plan["date"])
                 if part is None:
-                    part = synthesize(tts, styles, line, it["voice"], it["lang"], args.steps).reshape(-1).astype("float32")
+                    voice = (VOICES.get(lang) or ["F3"])[0]
+                    part = synthesize(tts, styles, line, voice, lang, args.steps).reshape(-1).astype("float32")
                 said[key] = part
             return said[key]
 

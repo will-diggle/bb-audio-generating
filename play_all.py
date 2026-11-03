@@ -4,7 +4,8 @@ Each edition (language, level, length) gets an intro: the greeting, the day, a l
 headlines, that edition's Global News headlines, a pause and "Bilinguist Brief Global News", over news
 music that fades out as the first article starts. Everything but the day and the headlines is read once and
 saved. There is one for each time of day, and each has a version with no title, for a reader
-whose brief doesn't start with Global News. Each language also gets one short title per topic,
+whose brief doesn't start with Global News. Concise editions also have one for free readers, ending
+with a message in English in place of the title, over the music. Each language also gets one short title per topic,
 played before that topic's articles. See "Play all" in the README for the files and how to use them.
 """
 from __future__ import annotations
@@ -14,7 +15,7 @@ from datetime import datetime
 TIMES = ("morning", "afternoon", "evening")
 
 # Bump when these words or the music in R2 change, so every intro is made again
-INTRO_VERSION = "3"
+INTRO_VERSION = "4"
 
 GREETINGS = {
     "en": ("Good morning", "Good afternoon", "Good evening"),
@@ -136,7 +137,8 @@ def intro_title(lang: str) -> str:
 def saved_lines(lang: str) -> list[str]:
     """The lines every intro in a language shares, whatever the day (Will, 3 Nov 2026: read once
     and saved, not read again for each edition)."""
-    return [greeting_line(lang, t) for t in TIMES] + [HEADLINES[lang], intro_title(lang)]
+    return ([greeting_line(lang, t) for t in TIMES] + [HEADLINES[lang], intro_title(lang)]
+            + ([FREE_MESSAGE] if lang == "en" else []))
 
 
 def as_sentence(headline: str) -> str:

@@ -182,7 +182,7 @@ class PlayAllTest(Base):
             self.assertEqual(len(P.DAYS[lang]), 31, lang)
             self.assertEqual(set(P.TITLES[lang]), set(P.TOPICS), lang)
             self.assertIn("Bilinguist Brief", P.HEADLINES[lang], lang)
-            self.assertEqual(len(P.saved_lines(lang)), 5, lang)
+            self.assertEqual(len(P.saved_lines(lang)), 6 if lang == "en" else 5, lang)
 
     def test_the_greeting_says_the_time_and_the_day(self):
         self.assertEqual(P.greeting_line("en", "evening"), "Good evening.")
@@ -236,21 +236,30 @@ class PlayAllTest(Base):
         self.assertFalse(A.expired("play-all/en/uk.mp3", "2026-10-20", "2026-11-02"))
 
     @unittest.skipUnless(np, "needs numpy")
-    def test_six_files_are_made_ending_with_the_one_that_says_its_done(self):
+    def test_the_files_are_made_ending_with_the_one_that_says_its_done(self):
         said, saved = [], {}
 
-        def say(line):
-            said.append(line)
-            return np.ones(1000, dtype=np.float32)
+        def say(line, lang=None):
+            said.append((line, lang))
+            return np.ones(1000 if line != P.FREE_MESSAGE else 3000, dtype=np.float32)
 
-        it = {"key": "k/_play-all", "lang": "en", "text": "One.\nTwo."}
-        A.read_intros(it, DATE, say, None, 1000, lambda key, samples: saved.update({key: samples}))
-        self.assertEqual(list(saved)[-1], "k/_play-all" + A.LAST_INTRO)
-        self.assertEqual(len(saved), 6)
-        self.assertGreater(len(saved["k/_play-all-morning"]), len(saved["k/_play-all-morning-no-title"]))
-        self.assertEqual(said.count("Bilinguist Brief Global News"), 1)
-        self.assertEqual(said.count("Today is Tuesday the third of November."), 1)
-        self.assertEqual(said.count("Here are today's Bilinguist Brief headlines."), 1)
+        key = f"{DATE}/de/A1/longer/_play-all"
+        A.read_intros({"key": key, "lang": "de", "text": "Eins.\nZwei."}, DATE, say, None, 1000,
+                      lambda k, samples: saved.update({k: samples}))
+        self.assertEqual(list(saved)[-1], key + A.LAST_INTRO)
+        self.assertEqual(len(saved), 6)                                        # no free reader gets this edition
+        self.assertGreater(len(saved[f"{key}-morning"]), len(saved[f"{key}-morning-no-title"]))
+        self.assertEqual(said.count((P.intro_title("de"), None)), 1)
+        self.assertEqual(said.count((P.day_line("de", DATE), None)), 1)
+        self.assertEqual(said.count((P.HEADLINES["de"], None)), 1)
+        said.clear(), saved.clear()
+        key = f"{DATE}/de/A1/short/_play-all"
+        A.read_intros({"key": key, "lang": "de", "text": "Eins.\nZwei."}, DATE, say, None, 1000,
+                      lambda k, samples: saved.update({k: samples}))
+        self.assertEqual(len(saved), 9)
+        self.assertEqual(list(saved)[-1], key + A.LAST_INTRO)
+        self.assertGreater(len(saved[f"{key}-morning-free"]), len(saved[f"{key}-morning"]))
+        self.assertEqual(said.count((P.FREE_MESSAGE, "en")), 1)                # English, whatever the language
 
     def test_shared_lines_keep_where_they_belong(self):
         self.assertEqual(A.saved_part_key(P.day_line("en", DATE), "en", DATE), f"{DATE}/en/_play-all-day.f32")

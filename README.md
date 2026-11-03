@@ -68,11 +68,15 @@ the end, as with `audioKey`.
   edition's Global News headlines, a pause and "Bilinguist Brief Global News". The music then fades to
   nothing over 3 seconds, so the first article starts straight after it.
 - `-no-title` stops after the headlines, for a brief that doesn't start with Global News.
+- `-free` is on `short` editions only, for free readers. After the headlines it says, in English in
+  every language, "For more daily news articles in full, subscribe to Brief Plus today." The music
+  carries on under that and fades out after it.
 
 **Topic titles:** `play-all/{lang}/{global-news|uk|eu|us|business}`. They have no music and don't
 change day to day.
 
-**Free message:** `play-all/en/free-message`, in English for every language, with no music.
+**Old free message:** `play-all/en/free-message` has no music. It stays until the website has moved to
+`-free`; the apps shouldn't use it.
 
 **To play a brief:**
 
@@ -83,8 +87,7 @@ change day to day.
 4. Skip the intro if the brief's date isn't the reader's date today, as it says the day. Intros are
    deleted a day after their date.
 5. A missing file (404) is skipped: the rest plays as normal.
-6. **A free reader** hears `_play-all-{time}-no-title`, then the free message, and it stops there: no
-   topic titles and no articles. They need a pass for these files on the website.
+6. **A free reader** hears `_play-all-{time}-free` and it stops there: no topic titles and no articles.
 7. The intro and titles aren't stories: leave them out of "1 of 11" and of what counts as heard for the
    streak, and don't give them their own Listen button.
 
