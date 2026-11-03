@@ -129,7 +129,7 @@ class PlanTest(Base):
         was = {i["key"]: i["voice"] for b in approved["waves"]["gn"] for i in b}
         left = {"date": DATE, "briefings": {"it": {"A1": {"short": {"articles": [dict(LEVEL, slug="bbb")]}}}}}
         plan, _ = self.plan(FakeR2(), bundle=left, q=two)
-        item = plan["waves"]["gn"][0][0]
+        item = next(i for b in plan["waves"]["gn"] for i in b if i["key"] == f"{DATE}/it/A1/short/bbb")
         self.assertEqual(item["voice"], was[f"{DATE}/it/Native/short/bbb"])
 
 
