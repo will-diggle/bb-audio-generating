@@ -148,8 +148,8 @@ class ReadyTest(Base):
         self.assertEqual(puts, [{"date": DATE, "read": {KEY: A.fingerprint(EN)}}])
         self.assertNotIn(de, puts[0]["read"])
 
-    def test_english_alone_makes_no_push(self):
-        self.assertEqual(self.run_ready(queue(), {f"{KEY}.mp3"}), [])
+    def test_english_alone_is_told_too(self):
+        self.assertEqual(self.run_ready(queue(), {f"{KEY}.mp3"}), [{"date": DATE, "read": {KEY: A.fingerprint(EN)}}])
 
     def test_yesterdays_queue_makes_no_push(self):
         self.assertEqual(self.run_ready({"date": "2026-11-02", "nativeJournalism": {"de": {}}}, set()), [])

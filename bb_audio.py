@@ -462,11 +462,6 @@ def cmd_ready(args) -> None:
     if not client or date != today_utc():
         log(f"Nothing to tell the final check (approved articles for {date or 'no date'}).")
         return
-    if set(queue.get("nativeJournalism") or {}) <= {"en"}:
-        # Only the English so far. The other natives are minutes away, and every push to
-        # bilinguist-data starts the fact sweep routine, so wait and say it all once.
-        log("Only the English is approved so far: nothing to tell the final check yet.")
-        return
     read = reader(existing_keys(client, date))
     done = {}
     for lang, level, length, a in articles(queue):
