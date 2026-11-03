@@ -245,7 +245,7 @@ class PlayAllTest(Base):
         self.assertEqual(list(saved)[-1], "k/_play-all" + A.LAST_INTRO)
         self.assertEqual(len(saved), 6)
         self.assertGreater(len(saved["k/_play-all-morning"]), len(saved["k/_play-all-morning-no-title"]))
-        self.assertEqual(said.count("Global News"), 1)
+        self.assertEqual(said.count("Bilinguist Brief Global News"), 1)
         self.assertEqual(said.count("Today is Tuesday the third of November."), 1)
         self.assertEqual(said.count("Here are today's Bilinguist Brief headlines."), 1)
 

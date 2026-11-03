@@ -286,11 +286,14 @@ def cmd_plan(args) -> None:
 # the headlines they share are only read once, and its last file says whether it's all done.
 
 TITLES_FOLDER = "play-all"
+# Not .mp3: the Worker serves any "<key>.mp3" at /audio/<key>, and the track must never be downloadable
+# on its own (Pixabay's licence bans standalone distribution)
+MUSIC_KEY = f"{TITLES_FOLDER}/news-music.track"
 LAST_INTRO = f"-{play_all.TIMES[-1]}-no-title"
 INTRO_LEAD, INTRO_TAIL = 2.5, 3.0     # seconds of music alone before the voice and after it
 MUSIC_LOUDNESS = 0.1                  # any track is brought to this (RMS), so a new one sits the same
 MUSIC_ALONE, MUSIC_UNDER = 0.7, 0.1   # alone it's about as loud as the voice, under it about 15 dB below
-GAPS = {"greeting": 0.25, "lead-in": 0.55, "headline": 0.65, "title": 0.75}
+GAPS = {"greeting": 0.25, "lead-in": 0.55, "headline": 0.65, "title": 1.4}
 
 
 def intro_key(date: str, lang: str, level: str, length: str) -> str:
@@ -403,7 +406,7 @@ def news_music(client, rate: int):
         path = Path(local) if local else Path(tmp) / "music.mp3"
         if not local:
             try:
-                path.write_bytes(client.get_object(Bucket=BUCKET, Key=f"{TITLES_FOLDER}/news-music.mp3")["Body"].read())
+                path.write_bytes(client.get_object(Bucket=BUCKET, Key=MUSIC_KEY)["Body"].read())
             except Exception as e:  # noqa: BLE001
                 log(f"No news music for the intros: {e}")
                 return None
@@ -444,7 +447,7 @@ def read_intros(it: dict, date: str, say, music, rate: int, save) -> None:
     headlines = []
     for line in it["text"].split("\n"):
         headlines += [say(line), gap("headline")]
-    title = say(play_all.TITLES[lang]["GLOBAL NEWS"])
+    title = say(play_all.intro_title(lang))
     today = [gap("greeting"), say(play_all.day_line(lang, date)), gap("greeting"),
              say(play_all.HEADLINES[lang]), gap("lead-in")]
     for time in play_all.TIMES:

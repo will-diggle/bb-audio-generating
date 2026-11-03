@@ -65,8 +65,8 @@ the end, as with `audioKey`.
 
 - `{time}` is `morning`, `afternoon` or `evening`. `{level}` is `A1` to `B2` or `Native`, as in `audioKey`.
 - It has about 2.5 seconds of music, then the greeting, the day, a line introducing the headlines, that
-  edition's Global News headlines and the title "Global News". The music then fades to nothing over 3
-  seconds, so the first article starts straight after it.
+  edition's Global News headlines, a pause and "Bilinguist Brief Global News". The music then fades to
+  nothing over 3 seconds, so the first article starts straight after it.
 - `-no-title` stops after the headlines, for a brief that doesn't start with Global News.
 
 **Topic titles:** `play-all/{lang}/{global-news|uk|eu|us|business}`. They have no music and don't
@@ -84,11 +84,12 @@ change day to day.
 
 The website's `/api/audio` route needs a pass for these keys too, as it does for `audioKey`.
 
-**The music** is `play-all/news-music.mp3` in R2, not in this public repo. To change it, replace the
-file and bump `INTRO_VERSION` in `play_all.py`, and every intro is made again. With no file, the
+**The music** is `play-all/news-music.track` in R2: not in this public repo, and not named `.mp3`, so
+the Worker can't serve it on its own, as its licence requires. To change it, replace the file and bump
+`INTRO_VERSION` in `play_all.py`, and every intro is made again. With no file, the
 intros are made with no music.
 
-**To save time**, the greeting, the line introducing the headlines and the title "Global News" are read
+**To save time**, the greeting, the line introducing the headlines and "Bilinguist Brief Global News" are read
 once per language and saved in `play-all/{lang}/parts/`. The date line is read once a day per language
 before the machines start. Only the headlines are read for each edition; the music is added in code.
 
