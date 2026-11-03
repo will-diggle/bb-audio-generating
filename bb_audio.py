@@ -126,7 +126,10 @@ def fetch_queue() -> dict:
 
 def fetch_bundle() -> dict:
     """Today's brief from the Worker (about 17 MB). Retried: a fetch timed out on 28 Oct."""
-    req = urllib.request.Request(f"{DATA_URL}/latest", headers={"User-Agent": "bb-audio-generating"})
+    headers = {"User-Agent": "bb-audio-generating"}
+    if os.environ.get("BB_CONTENT_KEY"):
+        headers["X-Internal-Key"] = os.environ["BB_CONTENT_KEY"]
+    req = urllib.request.Request(f"{DATA_URL}/latest", headers=headers)
     for attempt in range(4):
         try:
             with urllib.request.urlopen(req, timeout=300) as resp:
