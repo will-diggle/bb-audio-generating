@@ -33,6 +33,8 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import play_all
+
 BUCKET = "bilinguist-audio"
 DATA_URL = os.environ.get("BB_DATA_URL") or "https://api.bilinguistbrief.com"
 PLAN = Path("plan.json")
@@ -220,7 +222,7 @@ def cmd_plan(args) -> None:
         slugs[lang].sort()
 
     client = r2()
-    done = existing_keys(client, date) if client else set()
+    done = (existing_keys(client, date) | existing_keys(client, TITLES_FOLDER)) if client else set()
     read = reader(done)
     items, skipped = [], 0
     for lang, level, length, a in articles(bundle):
@@ -237,6 +239,10 @@ def cmd_plan(args) -> None:
                       "stale": [n for n in done if n.startswith(f"{key}.mp3.")]})
     if args.limit:
         items = items[: args.limit]
+    else:
+        more, already = play_all_items(bundle, date, read, done)
+        items += more
+        skipped += already
 
     # Two waves: Global News first (labelled as soon as they are read), then everything else; the
     # approved articles go in one, to be read before the brief is published. Within a wave: longest
@@ -263,13 +269,122 @@ def cmd_plan(args) -> None:
     log(f"{skipped} already in R2")
     if args.approved:  # the speak jobs read the text from the private branch
         for i in items:
-            del i["text"]
+            if not i["key"].startswith(f"{TITLES_FOLDER}/"):
+                del i["text"]
     PLAN.write_text(json.dumps({"date": date, "approved": args.approved, "waves": waves}, ensure_ascii=False))
     with out.open("a") as f:
         f.write(f"gn_matrix={json.dumps(list(range(len(waves['gn']))))}\n")
         f.write(f"rest_matrix={json.dumps(list(range(len(waves['rest']))))}\n")
         f.write(f"date={date}\n")
         f.write(f"source={'approved' if args.approved else 'brief'}\n")
+
+
+# ── Play all ─────────────────────────────────────────────────────────────────────────────────────
+# The intros and topic titles (play_all.py). An edition's six intro files are read as one item, so
+# the headlines they share are only read once, and its last file says whether it's all done.
+
+TITLES_FOLDER = "play-all"
+LAST_INTRO = f"-{play_all.TIMES[-1]}-no-title"
+INTRO_LEAD, INTRO_TAIL = 2.5, 3.0     # seconds of music alone before the voice and after it
+MUSIC_LOUDNESS = 0.1                  # any track is brought to this (RMS), so a new one sits the same
+MUSIC_ALONE, MUSIC_UNDER = 0.7, 0.1   # alone it's about as loud as the voice, under it about 15 dB below
+GAPS = {"greeting": 0.55, "headline": 0.65, "title": 0.75}
+
+
+def intro_key(date: str, lang: str, level: str, length: str) -> str:
+    return f"{date}/{lang}/{level}/{length}/_play-all"
+
+
+def intro_article(text: str) -> dict:
+    """What an intro's fingerprint is taken from: its headlines and the music."""
+    return {"bodyAudio": f"{play_all.MUSIC_VERSION}\n{text}"}
+
+
+def intro_headlines(bundle: dict) -> dict:
+    """Each edition's Global News headlines, as said aloud, one to a line, by its intro's key."""
+    found: dict[str, list[str]] = {}
+    date = bundle.get("date") or ""
+    for lang, level, length, a in articles(bundle):
+        if lang in play_all.GREETINGS and (a.get("genre") or "").upper() == "GLOBAL NEWS":
+            headline = (a.get("headlineAudio") or a.get("headline") or "").translate(PLAIN)
+            if headline.strip():
+                found.setdefault(intro_key(date, lang, level, length), []).append(play_all.as_sentence(headline))
+    return {key: "\n".join(lines) for key, lines in found.items()}
+
+
+def play_all_items(bundle: dict, date: str, read, done: set[str]) -> tuple[list[dict], int]:
+    """What's still to read: each edition's intros, and any topic title not made yet."""
+    items, skipped = [], 0
+    for key, text in intro_headlines(bundle).items():
+        a = intro_article(text)
+        if read(key + LAST_INTRO, a):
+            skipped += 1
+            continue
+        lang = key.split("/")[1]
+        items.append({"key": key, "lang": lang, "voice": (VOICES.get(lang) or ["F3"])[0], "text": text,
+                      "genre": "GLOBAL NEWS", "mark": fingerprint(a), "intro": True,
+                      "stale": [n for n in done if n.startswith(f"{key}-") and _MARK.search(n)]})
+    for lang in sorted({key.split("/")[1] for key in intro_headlines(bundle)}):
+        for genre, name in play_all.TOPICS.items():
+            key, text = f"{TITLES_FOLDER}/{lang}/{name}", play_all.TITLES[lang][genre]
+            a = {"bodyAudio": text}
+            if read(key, a):
+                continue
+            items.append({"key": key, "lang": lang, "voice": (VOICES.get(lang) or ["F3"])[0], "text": text,
+                          "genre": "GLOBAL NEWS", "mark": fingerprint(a),
+                          "stale": [n for n in done if n.startswith(f"{key}.mp3.")]})
+    return items, skipped
+
+
+def news_music(client, rate: int):
+    """The music under the intros, as samples, from R2 (BB_NEWS_MUSIC: a local file instead). None if
+    it isn't there: the intros still get read."""
+    local = os.environ.get("BB_NEWS_MUSIC")
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(local) if local else Path(tmp) / "music.mp3"
+        if not local:
+            try:
+                path.write_bytes(client.get_object(Bucket=BUCKET, Key=f"{TITLES_FOLDER}/news-music.mp3")["Body"].read())
+            except Exception as e:  # noqa: BLE001
+                log(f"No news music for the intros: {e}")
+                return None
+        raw = subprocess.run(["ffmpeg", "-loglevel", "error", "-i", str(path), "-ac", "1", "-ar", str(rate),
+                              "-f", "f32le", "-"], check=True, capture_output=True).stdout
+    import numpy as np
+    music = np.frombuffer(raw, dtype=np.float32)
+    return music * (MUSIC_LOUDNESS / max(float(np.sqrt(np.mean(music ** 2))), 1e-6)) if len(music) else None
+
+
+def over_music(voice, music, rate: int):
+    """The music alone, then quietly under the voice, then rising and fading to nothing, so it's gone
+    as the first article starts."""
+    import numpy as np
+    lead, tail = int(INTRO_LEAD * rate), int(INTRO_TAIL * rate)
+    voice = np.concatenate([np.zeros(lead, dtype=np.float32), voice, np.zeros(tail, dtype=np.float32)])
+    if music is None or not len(music):
+        return voice[lead - rate // 4:len(voice) - tail + rate // 4]
+    bed = np.tile(music, len(voice) // len(music) + 1)[:len(voice)]
+    end = (len(voice) - tail) / rate
+    level = np.interp(np.arange(len(voice)) / rate,
+                      [0, INTRO_LEAD - 0.7, INTRO_LEAD - 0.1, end + 0.1, end + 0.7, end + INTRO_TAIL],
+                      [MUSIC_ALONE, MUSIC_ALONE, MUSIC_UNDER, MUSIC_UNDER, MUSIC_ALONE * 0.8, 0.0])
+    mixed = voice + bed * level
+    return mixed / max(1.0, float(np.abs(mixed).max()) / 0.97)
+
+
+def read_intros(it: dict, date: str, say, music, rate: int, save) -> None:
+    """Make an edition's six intro files, ending with the one that says it's done."""
+    import numpy as np
+    gap = lambda name: np.zeros(int(GAPS[name] * rate), dtype=np.float32)
+    lang = it["lang"]
+    headlines = []
+    for line in it["text"].split("\n"):
+        headlines += [say(line), gap("headline")]
+    title = say(play_all.TITLES[lang]["GLOBAL NEWS"])
+    for time in play_all.TIMES:
+        opening = [say(play_all.greeting(lang, date, time)), gap("greeting")]
+        save(f"{it['key']}-{time}", over_music(np.concatenate([*opening, *headlines[:-1], gap("title"), title]), music, rate))
+        save(f"{it['key']}-{time}-no-title", over_music(np.concatenate([*opening, *headlines[:-1]]), music, rate))
 
 
 # ── Speak ─────────────────────────────────────────────────────────────────────
@@ -279,8 +394,10 @@ def cmd_speak(args) -> None:
     batch = plan["waves"][args.wave][args.batch]
     approved = {}
     if plan.get("approved"):
+        queue = fetch_queue()
         approved = {f"{plan['date']}/{lang}/{level}/{length}/{a.get('slug')}": text_of(a)
-                    for lang, level, length, a in articles(fetch_queue())}
+                    for lang, level, length, a in articles(queue)}
+        approved.update(intro_headlines(queue))
     from supertonic import TTS
     tts = TTS(model="supertonic-3")
     styles: dict[str, object] = {}
@@ -289,23 +406,63 @@ def cmd_speak(args) -> None:
     audio_secs = 0.0
     start = time.time()
 
+    def synthesize(text: str, it: dict):
+        style = styles.get(it["voice"]) or styles.setdefault(it["voice"], tts.get_voice_style(it["voice"]))
+        while True:
+            try:
+                wav, _ = tts.synthesize(text, voice_style=style, lang=it["lang"], total_steps=args.steps,
+                                        speed=SPEED_BY_LANG.get(it["lang"], SPEED))
+                return wav
+            except ValueError as e:  # a character the model can't read: say nothing for it
+                bad = re.findall(r"'(.)'", str(e))
+                if not bad:
+                    raise
+                for ch in bad:
+                    text = text.replace(ch, " ")
+
+    music = None
+    if any(it.get("intro") for it in batch):
+        music = news_music(client, tts.sample_rate)
+
+    def read_intro_item(it: dict) -> None:
+        said: dict[str, object] = {}
+
+        def say(line: str):
+            if line not in said:
+                said[line] = synthesize(line, it).reshape(-1).astype("float32")
+            return said[line]
+
+        def save(key: str, samples) -> None:
+            with tempfile.TemporaryDirectory() as tmp:
+                wav_path, mp3_path = Path(tmp) / "a.wav", Path(tmp) / "a.mp3"
+                tts.save_audio(samples, str(wav_path))
+                subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", str(wav_path), "-ac", "1", "-ar", "44100",
+                                "-b:a", "64k", str(mp3_path)], check=True)
+                body = mp3_path.read_bytes()
+            if client:
+                client.put_object(Bucket=BUCKET, Key=f"{key}.mp3", Body=body, ContentType="audio/mpeg")
+                client.put_object(Bucket=BUCKET, Key=f"{key}.mp3.{it['mark']}", Body=b"")
+            else:
+                local = Path("out") / f"{key}.mp3"
+                local.parent.mkdir(parents=True, exist_ok=True)
+                local.write_bytes(body)
+
+        if client:
+            for old in it.get("stale") or []:
+                client.delete_object(Bucket=BUCKET, Key=old)
+        read_intros(it, plan["date"], say, music, tts.sample_rate, save)
+
     for it in batch:
         text = it["text"] = it.get("text") or approved.get(it["key"]) or ""
         try:
             if not text:
                 raise ValueError("no text for this article")
-            style = styles.get(it["voice"]) or styles.setdefault(it["voice"], tts.get_voice_style(it["voice"]))
-            while True:
-                try:
-                    wav, _ = tts.synthesize(text, voice_style=style, lang=it["lang"], total_steps=args.steps,
-                                              speed=SPEED_BY_LANG.get(it["lang"], SPEED))
-                    break
-                except ValueError as e:  # a character the model can't read: say nothing for it
-                    bad = re.findall(r"'(.)'", str(e))
-                    if not bad:
-                        raise
-                    for ch in bad:
-                        text = text.replace(ch, " ")
+            if it.get("intro"):
+                read_intro_item(it)
+                ok += 1
+                chars += len(text)
+                continue
+            wav = synthesize(text, it)
             with tempfile.TemporaryDirectory() as tmp:
                 wav_path, mp3_path = Path(tmp) / "a.wav", Path(tmp) / "a.mp3"
                 tts.save_audio(wav, str(wav_path))
@@ -337,6 +494,12 @@ def cmd_speak(args) -> None:
 
 # ── Check + clean-up ──────────────────────────────────────────────────────────
 
+def expired(key: str, cutoff: str, intro_cutoff: str) -> bool:
+    day = key.split("/", 1)[0]
+    return bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", day)) and (
+        day < cutoff or ("/_play-all-" in key and day < intro_cutoff))
+
+
 def cmd_check(args) -> None:
     client = r2()
     if not client:
@@ -358,13 +521,19 @@ def cmd_check(args) -> None:
         with open(step, "a") as f:
             f.write(f"### {summary}\n" + "".join(f"- missing `{k}`\n" for k in missing[:50]))
 
-    # Keep the last KEEP_DAYS days (R2's free tier is 10 GB; a day is about 0.3 GB).
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=KEEP_DAYS)).strftime("%Y-%m-%d")
+    intros = intro_headlines(bundle)
+    read_intros_count = sum(read(key + LAST_INTRO, intro_article(text)) for key, text in intros.items())
+    log(f"{date}: {read_intros_count} of {len(intros)} Play all intros are made")
+
+    # Keep the last KEEP_DAYS days (R2's free tier is 10 GB; a day is about 0.5 GB). An intro says
+    # today's date, so it's no use after that day: those go after a day.
+    now = datetime.now(timezone.utc)
+    cutoff = (now - timedelta(days=KEEP_DAYS)).strftime("%Y-%m-%d")
+    intro_cutoff = (now - timedelta(days=1)).strftime("%Y-%m-%d")
     old = []
     for page in client.get_paginator("list_objects_v2").paginate(Bucket=BUCKET):
         for o in page.get("Contents", []):
-            day = o["Key"].split("/", 1)[0]
-            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", day) and day < cutoff:
+            if expired(o["Key"], cutoff, intro_cutoff):
                 old.append({"Key": o["Key"]})
     for i in range(0, len(old), 1000):
         client.delete_objects(Bucket=BUCKET, Delete={"Objects": old[i:i + 1000], "Quiet": True})

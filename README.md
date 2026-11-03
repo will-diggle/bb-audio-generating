@@ -54,3 +54,36 @@ pip install -r requirements.txt
 python bb_audio.py plan --limit 3 --batches 1
 python bb_audio.py speak --batch 0      # without R2 keys the MP3s land in ./out
 ```
+
+## Play all
+
+The spoken parts of Play all are made here, ready to play between the articles (`play_all.py`). The
+apps and website only choose which files to play. Each file is at `/audio/<key>.mp3`.
+
+**Intro:** `{date}/{lang}/{level}/{length}/_play-all-{time}` and `..-{time}-no-title`
+
+- `{time}` is `morning`, `afternoon` or `evening`. `{level}` is `A1` to `B2` or `Native`, as in `audioKey`.
+- It has about 2.5 seconds of music, then the greeting, the day, that edition's Global News headlines
+  and the title "Global News". The music then fades to nothing over 3 seconds, so the first article
+  starts straight after it.
+- `-no-title` stops after the headlines, for a brief that doesn't start with Global News.
+
+**Topic titles:** `play-all/{lang}/{global-news|uk|eu|us|business}`. They have no music and don't
+change day to day.
+
+**To play a brief:**
+
+1. Reader's time 05:00-11:59 is `morning`, 12:00-17:59 `afternoon`, otherwise `evening`.
+2. If the brief starts with Global News, play `_play-all-{time}`, then its articles. If not, play
+   `_play-all-{time}-no-title`, then that topic's title, then its articles.
+3. Before each later topic, play its title, then its articles.
+4. Skip the intro if the brief's date isn't the reader's date today, as it says the day. Intros are
+   deleted a day after their date.
+5. A missing file (404) is skipped: the rest plays as normal.
+
+The website's `/api/audio` route needs a pass for these keys too, as it does for `audioKey`.
+
+**The music** is `play-all/news-music.mp3` in R2, not in this public repo. To change it, replace the
+file and bump `MUSIC_VERSION` in `play_all.py`, and every intro is made again. With no file, the
+intros are made with no music.
+
