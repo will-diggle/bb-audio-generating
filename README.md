@@ -22,8 +22,9 @@ MP3s to Cloudflare R2, where the app's Worker serves them (`/audio/{date}/{lang}
 ## How a run works
 
 An `articles-approved` run reads what's approved from the private branch, in one wave (their text is
-never put in this public repo's files), then saves `ready.json` there. The final check uses that to
-put Listen on them in the same push that publishes the brief.
+never put in this public repo's files), then saves `ready.json` there, so the English is on the list
+first and the other natives join it. The final check uses that to put Listen on them in the same push
+that publishes the brief.
 
 A `brief-ready` run:
 
