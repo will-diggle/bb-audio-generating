@@ -114,6 +114,11 @@ TITLES = {
 }
 
 
+# After the headlines, a free reader hears this and Play all stops: in English whatever their
+# language (Will, 3 Nov 2026). "Plus" is written out because the voice can't say "+".
+FREE_MESSAGE = "For more daily news articles in full, subscribe to Brief Plus today."
+
+
 def greeting_line(lang: str, time: str) -> str:
     return f"{GREETINGS[lang][TIMES.index(time)]}."
 

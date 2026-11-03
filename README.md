@@ -72,6 +72,8 @@ the end, as with `audioKey`.
 **Topic titles:** `play-all/{lang}/{global-news|uk|eu|us|business}`. They have no music and don't
 change day to day.
 
+**Free message:** `play-all/en/free-message`, in English for every language, with no music.
+
 **To play a brief:**
 
 1. Reader's time 05:00-11:59 is `morning`, 12:00-17:59 `afternoon`, otherwise `evening`.
@@ -81,7 +83,9 @@ change day to day.
 4. Skip the intro if the brief's date isn't the reader's date today, as it says the day. Intros are
    deleted a day after their date.
 5. A missing file (404) is skipped: the rest plays as normal.
-6. The intro and titles aren't stories: leave them out of "1 of 11" and of what counts as heard for the
+6. **A free reader** hears `_play-all-{time}-no-title`, then the free message, and it stops there: no
+   topic titles and no articles. They need a pass for these files on the website.
+7. The intro and titles aren't stories: leave them out of "1 of 11" and of what counts as heard for the
    streak, and don't give them their own Listen button.
 
 The website's `/api/audio` route needs a pass for these keys too, as it does for `audioKey`.

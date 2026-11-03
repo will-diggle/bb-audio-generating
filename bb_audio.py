@@ -338,6 +338,11 @@ def play_all_items(bundle: dict, date: str, read, done: set[str]) -> tuple[list[
             items.append({"key": key, "lang": lang, "voice": (VOICES.get(lang) or ["F3"])[0], "text": text,
                           "genre": "GLOBAL NEWS", "mark": fingerprint(a),
                           "stale": [n for n in done if n.startswith(f"{key}.mp3.")]})
+    key, a = f"{TITLES_FOLDER}/en/free-message", {"bodyAudio": play_all.FREE_MESSAGE}
+    if not read(key, a):
+        items.append({"key": key, "lang": "en", "voice": VOICES["en"][0], "text": play_all.FREE_MESSAGE,
+                      "genre": "GLOBAL NEWS", "mark": fingerprint(a),
+                      "stale": [n for n in done if n.startswith(f"{key}.mp3.")]})
     return items, skipped
 
 

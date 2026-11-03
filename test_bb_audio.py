@@ -202,6 +202,8 @@ class PlayAllTest(Base):
         self.assertTrue(first[f"{DATE}/en/A1/short/_play-all"]["intro"])
         self.assertEqual(first[f"{DATE}/en/A1/short/_play-all"]["text"], "Ceasefire holds.")
         self.assertEqual(first["play-all/en/uk"]["text"], "United Kingdom")
+        self.assertEqual(first["play-all/en/free-message"]["lang"], "en")
+        self.assertIn("Plus", first["play-all/en/free-message"]["text"])
 
     def test_an_approved_plan_never_holds_a_headline(self):
         q = {"date": DATE, "nativeJournalism": {"en": {"short": [dict(self.GN)]}}}
@@ -215,6 +217,7 @@ class PlayAllTest(Base):
         mark = A.fingerprint(A.intro_article("Ceasefire holds."))
         last = f"{key}{A.LAST_INTRO}.mp3"
         title_marks = {f"play-all/en/{n}.mp3.{A.fingerprint({'bodyAudio': P.TITLES['en'][g]})}" for g, n in P.TOPICS.items()}
+        title_marks.add(f"play-all/en/free-message.mp3.{A.fingerprint({'bodyAudio': P.FREE_MESSAGE})}")
         have = {last, f"{last}.{mark}"} | title_marks | {m.rsplit(".", 1)[0] for m in title_marks}
         plan, _ = self.plan(FakeR2(have), bundle=self.bundle())
         keys = [i["key"] for b in plan["waves"]["gn"] for i in b]
