@@ -411,7 +411,12 @@ def news_music(client, rate: int):
                               "-f", "f32le", "-"], check=True, capture_output=True).stdout
     import numpy as np
     music = np.frombuffer(raw, dtype=np.float32)
-    return music * (MUSIC_LOUDNESS / max(float(np.sqrt(np.mean(music ** 2))), 1e-6)) if len(music) else None
+    sound = np.flatnonzero(np.abs(music) > 0.003)
+    if not len(sound):
+        return None
+    music = music[sound[0]:]   # a silent start would eat into the music played alone
+    played = music[:60 * rate]  # level it on the part an intro actually plays
+    return music * (MUSIC_LOUDNESS / max(float(np.sqrt(np.mean(played ** 2))), 1e-6))
 
 
 def over_music(voice, music, rate: int):

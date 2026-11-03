@@ -258,6 +258,15 @@ class PlayAllTest(Base):
         self.assertIsNone(A.saved_part(FakeR2(), "A headline.", "en", DATE))     # a headline is never saved
 
     @unittest.skipUnless(np, "needs numpy")
+    def test_a_tracks_silent_start_goes_and_it_is_levelled(self):
+        raw = np.concatenate([np.zeros(100, dtype=np.float32), np.full(1000, 0.5, dtype=np.float32)]).tobytes()
+        with mock.patch.dict(os.environ, {"BB_NEWS_MUSIC": "track.mp3"}), \
+                mock.patch.object(A.subprocess, "run", lambda *a, **k: NS(stdout=raw)):
+            music = A.news_music(None, 100)
+        self.assertEqual(len(music), 1000)
+        self.assertAlmostEqual(float(music[0]), A.MUSIC_LOUDNESS, places=4)
+
+    @unittest.skipUnless(np, "needs numpy")
     def test_the_music_comes_first_and_is_gone_at_the_end(self):
         rate = 1000
         voice = np.zeros(10 * rate, dtype=np.float32)
