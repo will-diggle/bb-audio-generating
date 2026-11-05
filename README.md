@@ -54,3 +54,51 @@ pip install -r requirements.txt
 python bb_audio.py plan --limit 3 --batches 1
 python bb_audio.py speak --batch 0      # without R2 keys the MP3s land in ./out
 ```
+
+## Play all
+
+The spoken parts of Play all are made here, ready to play between the articles (`play_all.py`). The
+apps and website only choose which files to play. Each file is at `/audio/<key>`, with no `.mp3` on
+the end, as with `audioKey`.
+
+**Intro:** `{date}/{lang}/{level}/{length}/_play-all-{time}` and `..-{time}-no-title`
+
+- `{time}` is `morning`, `afternoon` or `evening`. `{level}` is `A1` to `B2` or `Native`, as in `audioKey`.
+- It has about 2.5 seconds of music, then the greeting, the day, a line introducing the headlines, that
+  edition's Global News headlines, a pause and "Bilinguist Brief Global News". The music then fades to
+  nothing over 3 seconds, so the first article starts straight after it.
+- `-no-title` stops after the headlines, for a brief that doesn't start with Global News.
+- `-free` is on `short` editions only, for free readers. After the headlines it says, in English in
+  every language, "For more daily news articles in full, subscribe to Brief Plus today." The music
+  carries on under that and fades out after it.
+
+**Topic titles:** `play-all/{lang}/{global-news|uk|eu|us|business}`. They have no music and don't
+change day to day.
+
+**Old free message:** `play-all/en/free-message` has no music. It stays until the website has moved to
+`-free`; the apps shouldn't use it.
+
+**To play a brief:**
+
+1. Reader's time 05:00-11:59 is `morning`, 12:00-17:59 `afternoon`, otherwise `evening`.
+2. If the brief starts with Global News, play `_play-all-{time}`, then its articles. If not, play
+   `_play-all-{time}-no-title`, then that topic's title, then its articles.
+3. Before each later topic, play its title, then its articles.
+4. Skip the intro if the brief's date isn't the reader's date today, as it says the day. Intros are
+   deleted a day after their date.
+5. A missing file (404) is skipped: the rest plays as normal.
+6. **A free reader** hears `_play-all-{time}-free` and it stops there: no topic titles and no articles.
+7. The intro and titles aren't stories: leave them out of "1 of 11" and of what counts as heard for the
+   streak, and don't give them their own Listen button.
+
+The website's `/api/audio` route needs a pass for these keys too, as it does for `audioKey`.
+
+**The music** is `play-all/news-music.track` in R2: not in this public repo, and not named `.mp3`, so
+the Worker can't serve it on its own, as its licence requires. To change it, replace the file and bump
+`INTRO_VERSION` in `play_all.py`, and every intro is made again. With no file, the
+intros are made with no music.
+
+**To save time**, the greeting, the line introducing the headlines and "Bilinguist Brief Global News" are read
+once per language and saved in `play-all/{lang}/parts/`. The date line is read once a day per language
+before the machines start. Only the headlines are read for each edition; the music is added in code.
+

@@ -13,6 +13,12 @@ from types import SimpleNamespace as NS
 from unittest import mock
 
 import bb_audio as A
+import play_all as P
+
+try:
+    import numpy as np
+except ImportError:
+    np = None
 
 DATE = "2026-11-03"
 EN = {"genre": "US", "slug": "crash", "headline": "Learjet 60 (sixty) crashes", "headlineAudio": "Learjet 60 crashes",
@@ -58,6 +64,7 @@ class Base(unittest.TestCase):
         with mock.patch.object(A, "r2", lambda: r2), mock.patch.object(A, "today_utc", lambda: DATE), \
                 mock.patch.object(A, "existing_keys", lambda c, d: set(c.names)), \
                 mock.patch.object(A, "fetch_bundle", lambda: bundle or brief()), \
+                mock.patch.object(A, "make_saved_parts", lambda *a: None), \
                 mock.patch.object(A, "fetch_queue", lambda: q if q is not None else queue()), \
                 mock.patch.object(A, "log"):
             A.cmd_plan(NS(date="", wait=0, batches=20, limit=0, approved=approved))
@@ -101,7 +108,7 @@ class PlanTest(Base):
         done = {f"{KEY}.mp3", f"{KEY}.mp3.{A.fingerprint(EN)}"}
         plan, out = self.plan(FakeR2(done))
         keys = [i["key"] for w in plan["waves"].values() for b in w for i in b]
-        self.assertEqual(keys, [f"{DATE}/en/A1/short/crash"])
+        self.assertEqual([k for k in keys if "play-all" not in k], [f"{DATE}/en/A1/short/crash"])
         self.assertIn("source=brief", out)
 
     def test_a_native_the_final_check_changed_is_read_again(self):
@@ -122,7 +129,7 @@ class PlanTest(Base):
         was = {i["key"]: i["voice"] for b in approved["waves"]["gn"] for i in b}
         left = {"date": DATE, "briefings": {"it": {"A1": {"short": {"articles": [dict(LEVEL, slug="bbb")]}}}}}
         plan, _ = self.plan(FakeR2(), bundle=left, q=two)
-        item = plan["waves"]["gn"][0][0]
+        item = next(i for b in plan["waves"]["gn"] for i in b if i["key"] == f"{DATE}/it/A1/short/bbb")
         self.assertEqual(item["voice"], was[f"{DATE}/it/Native/short/bbb"])
 
 
@@ -153,6 +160,134 @@ class ReadyTest(Base):
 
     def test_yesterdays_queue_makes_no_push(self):
         self.assertEqual(self.run_ready({"date": "2026-11-02", "nativeJournalism": {"de": {}}}, set()), [])
+
+
+class PlayAllTest(Base):
+    """The Play all intros and topic titles (Will, 3 Nov 2026)."""
+    GN = {"genre": "GLOBAL NEWS", "slug": "a", "headline": "Plane 60 (sixty) crashes", "headlineAudio": "Plane 60 crashes",
+          "body": "Secret text."}
+    GN2 = {"genre": "GLOBAL NEWS", "slug": "b", "headline": "Ceasefire holds.", "body": "More."}
+    UK = {"genre": "UK", "slug": "c", "headline": "Not a top story", "body": "Text."}
+
+    def bundle(self):
+        return {"date": DATE, "nativeJournalism": {"en": {"short": [dict(self.GN), dict(self.UK)]}},
+                "briefings": {"en": {"A1": {"short": {"articles": [dict(self.GN2), dict(self.UK)]}}},
+                              "hu": {"A1": {"short": {"articles": [dict(self.GN2)]}}}}}
+
+    def test_every_language_has_all_its_words(self):
+        for lang in P.GREETINGS:
+            self.assertEqual(len(P.GREETINGS[lang]), 3, lang)
+            self.assertEqual(len(P.WEEKDAYS[lang]), 7, lang)
+            self.assertEqual(len(P.MONTHS[lang]), 12, lang)
+            self.assertEqual(len(P.DAYS[lang]), 31, lang)
+            self.assertEqual(set(P.TITLES[lang]), set(P.TOPICS), lang)
+            self.assertIn("Bilinguist Brief", P.HEADLINES[lang], lang)
+            self.assertEqual(len(P.saved_lines(lang)), 6 if lang == "en" else 5, lang)
+
+    def test_the_greeting_says_the_time_and_the_day(self):
+        self.assertEqual(P.greeting_line("en", "evening"), "Good evening.")
+        self.assertEqual(P.day_line("en", DATE), "Today is Tuesday the third of November.")
+        self.assertIn("Dienstag, der dritte November", P.day_line("de", DATE))
+        self.assertIn("treinta y uno de diciembre", P.day_line("es", "2026-12-31"))
+        self.assertIn("vinte e cinco de dezembro", P.day_line("pt", "2026-12-25"))
+
+    def test_each_edition_gets_its_own_global_news_headlines(self):
+        heads = A.intro_headlines(self.bundle())
+        self.assertEqual(heads, {f"{DATE}/en/A1/short/_play-all": "Ceasefire holds.",
+                                 f"{DATE}/en/Native/short/_play-all": "Plane 60 crashes."})    # no hu: no words for it
+
+    def test_a_publish_run_plans_the_intros_and_titles_in_the_first_wave(self):
+        plan, _ = self.plan(FakeR2(), bundle=self.bundle())
+        first = {i["key"]: i for b in plan["waves"]["gn"] for i in b}
+        self.assertTrue(first[f"{DATE}/en/A1/short/_play-all"]["intro"])
+        self.assertEqual(first[f"{DATE}/en/A1/short/_play-all"]["text"], "Ceasefire holds.")
+        self.assertEqual(first["play-all/en/uk"]["text"], "United Kingdom")
+        self.assertEqual(first["play-all/en/free-message"]["lang"], "en")
+        self.assertIn("Plus", first["play-all/en/free-message"]["text"])
+
+    def test_an_approved_plan_never_holds_a_headline(self):
+        q = {"date": DATE, "nativeJournalism": {"en": {"short": [dict(self.GN)]}}}
+        plan, _ = self.plan(FakeR2(), approved=True, bundle=q, q=q)
+        self.assertNotIn("Plane 60", json.dumps(plan))
+        self.assertIn(f"{DATE}/en/Native/short/_play-all", json.dumps(plan))
+        self.assertIn("United Kingdom", json.dumps(plan))                      # a title is no secret
+
+    def test_what_is_made_is_left_and_a_changed_headline_is_made_again(self):
+        key = f"{DATE}/en/A1/short/_play-all"
+        mark = A.fingerprint(A.intro_article("Ceasefire holds."))
+        last = f"{key}{A.LAST_INTRO}.mp3"
+        title_marks = {f"play-all/en/{n}.mp3.{A.fingerprint({'bodyAudio': P.TITLES['en'][g]})}" for g, n in P.TOPICS.items()}
+        title_marks.add(f"play-all/en/free-message.mp3.{A.fingerprint({'bodyAudio': P.FREE_MESSAGE})}")
+        have = {last, f"{last}.{mark}"} | title_marks | {m.rsplit(".", 1)[0] for m in title_marks}
+        plan, _ = self.plan(FakeR2(have), bundle=self.bundle())
+        keys = [i["key"] for b in plan["waves"]["gn"] for i in b]
+        self.assertNotIn(key, keys)
+        self.assertFalse([k for k in keys if k.startswith("play-all/")])
+        changed = self.bundle()
+        changed["briefings"]["en"]["A1"]["short"]["articles"][0]["headline"] = "Ceasefire ends."
+        plan, _ = self.plan(FakeR2(have), bundle=changed)
+        item = next(i for b in plan["waves"]["gn"] for i in b if i["key"] == key)
+        self.assertEqual(item["stale"], [f"{last}.{mark}"])
+
+    def test_old_intros_go_first(self):
+        self.assertTrue(A.expired("2026-11-01/en/A1/short/_play-all-morning.mp3", "2026-10-20", "2026-11-02"))
+        self.assertFalse(A.expired("2026-11-02/en/A1/short/_play-all-morning.mp3", "2026-10-20", "2026-11-02"))
+        self.assertFalse(A.expired("2026-11-01/en/A1/short/a-story.mp3", "2026-10-20", "2026-11-02"))
+        self.assertFalse(A.expired("play-all/en/uk.mp3", "2026-10-20", "2026-11-02"))
+
+    @unittest.skipUnless(np, "needs numpy")
+    def test_the_files_are_made_ending_with_the_one_that_says_its_done(self):
+        said, saved = [], {}
+
+        def say(line, lang=None):
+            said.append((line, lang))
+            return np.ones(1000 if line != P.FREE_MESSAGE else 3000, dtype=np.float32)
+
+        key = f"{DATE}/de/A1/longer/_play-all"
+        A.read_intros({"key": key, "lang": "de", "text": "Eins.\nZwei."}, DATE, say, None, 1000,
+                      lambda k, samples: saved.update({k: samples}))
+        self.assertEqual(list(saved)[-1], key + A.LAST_INTRO)
+        self.assertEqual(len(saved), 6)                                        # no free reader gets this edition
+        self.assertGreater(len(saved[f"{key}-morning"]), len(saved[f"{key}-morning-no-title"]))
+        self.assertEqual(said.count((P.intro_title("de"), None)), 1)
+        self.assertEqual(said.count((P.day_line("de", DATE), None)), 1)
+        self.assertEqual(said.count((P.HEADLINES["de"], None)), 1)
+        said.clear(), saved.clear()
+        key = f"{DATE}/de/A1/short/_play-all"
+        A.read_intros({"key": key, "lang": "de", "text": "Eins.\nZwei."}, DATE, say, None, 1000,
+                      lambda k, samples: saved.update({k: samples}))
+        self.assertEqual(len(saved), 9)
+        self.assertEqual(list(saved)[-1], key + A.LAST_INTRO)
+        self.assertGreater(len(saved[f"{key}-morning-free"]), len(saved[f"{key}-morning"]))
+        self.assertEqual(said.count((P.FREE_MESSAGE, "en")), 1)                # English, whatever the language
+
+    def test_shared_lines_keep_where_they_belong(self):
+        self.assertEqual(A.saved_part_key(P.day_line("en", DATE), "en", DATE), f"{DATE}/en/_play-all-day.f32")
+        key = A.saved_part_key(P.HEADLINES["en"], "en", DATE)
+        self.assertTrue(key.startswith("play-all/en/parts/"))
+        self.assertTrue(A.expired("2026-11-01/en/_play-all-day.f32", "2026-10-20", "2026-11-02"))
+        self.assertFalse(A.expired(key, "2026-10-20", "2026-11-02"))
+        self.assertIsNone(A.saved_part(FakeR2(), "A headline.", "en", DATE))     # a headline is never saved
+
+    @unittest.skipUnless(np, "needs numpy")
+    def test_a_tracks_silent_start_goes_and_it_is_levelled(self):
+        raw = np.concatenate([np.zeros(100, dtype=np.float32), np.full(1000, 0.5, dtype=np.float32)]).tobytes()
+        with mock.patch.dict(os.environ, {"BB_NEWS_MUSIC": "track.mp3"}), \
+                mock.patch.object(A.subprocess, "run", lambda *a, **k: NS(stdout=raw)):
+            music = A.news_music(None, 100)
+        self.assertEqual(len(music), 1000)
+        self.assertAlmostEqual(float(music[0]), A.MUSIC_LOUDNESS, places=4)
+
+    @unittest.skipUnless(np, "needs numpy")
+    def test_the_music_comes_first_and_is_gone_at_the_end(self):
+        rate = 1000
+        voice = np.zeros(10 * rate, dtype=np.float32)
+        out = A.over_music(voice, np.ones(rate, dtype=np.float32) * 0.1, rate)
+        self.assertEqual(len(out), int((A.INTRO_LEAD + 10 + A.INTRO_TAIL) * rate))
+        self.assertAlmostEqual(float(out[0]), 0.1 * A.MUSIC_ALONE, places=3)
+        self.assertAlmostEqual(float(out[len(out) // 2]), 0.1 * A.MUSIC_UNDER, places=3)
+        self.assertLess(abs(float(out[-1])), 0.001)
+        self.assertEqual(len(A.over_music(voice, None, rate)), 10 * rate + rate // 2)   # no music: still made
 
 
 class SpeakTest(Base):
