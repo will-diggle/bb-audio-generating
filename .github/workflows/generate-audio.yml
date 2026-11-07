@@ -206,7 +206,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install boto3
+      - run: pip install boto3 num2words
       - name: Label the live brief with its audio
         env:
           DATA_REPO_TOKEN: ${{ secrets.DATA_REPO_TOKEN }}

@@ -74,12 +74,12 @@ class Base(unittest.TestCase):
 
 class TextTest(unittest.TestCase):
     def test_the_voice_never_gets_a_spelled_out_number(self):
-        self.assertEqual(A.text_of(EN), "Learjet 60 crashes. Nine died.")
-        self.assertEqual(A.text_of(LEVEL), "A plane crashed. Nine people died.")
+        self.assertEqual(A.text_of(EN, "en"), "Learjet sixty crashes. Nine died.")
+        self.assertEqual(A.text_of(LEVEL, "en"), "A plane crashed. Nine people died.")
 
     def test_invisible_marks_are_dropped_inside_words(self):
         # a soft hyphen in a Swedish native article lost its audio on 7 Nov 2026
-        self.assertEqual(A.text_of({"headline": "Merz", "body": "presi\xaddent​ val﻿"}),
+        self.assertEqual(A.text_of({"headline": "Merz", "body": "presi\xaddent\u200b val\ufeff"}, "sv"),
                          "Merz. president val")
 
     def test_a_character_the_voice_refuses_is_dropped_even_when_it_prints_escaped(self):
@@ -211,7 +211,7 @@ class PlayAllTest(Base):
     def test_each_edition_gets_its_own_global_news_headlines(self):
         heads = A.intro_headlines(self.bundle())
         self.assertEqual(heads, {f"{DATE}/en/A1/short/_play-all": "Ceasefire holds.",
-                                 f"{DATE}/en/Native/short/_play-all": "Plane 60 crashes."})    # no hu: no words for it
+                                 f"{DATE}/en/Native/short/_play-all": "Plane sixty crashes."})    # no hu: no words for it
 
     def test_a_publish_run_plans_the_intros_and_titles_in_the_first_wave(self):
         plan, _ = self.plan(FakeR2(), bundle=self.bundle())
@@ -225,7 +225,7 @@ class PlayAllTest(Base):
     def test_an_approved_plan_never_holds_a_headline(self):
         q = {"date": DATE, "nativeJournalism": {"en": {"short": [dict(self.GN)]}}}
         plan, _ = self.plan(FakeR2(), approved=True, bundle=q, q=q)
-        self.assertNotIn("Plane 60", json.dumps(plan))
+        self.assertNotIn("crashes", json.dumps(plan))
         self.assertIn(f"{DATE}/en/Native/short/_play-all", json.dumps(plan))
         self.assertIn("United Kingdom", json.dumps(plan))                      # a title is no secret
 
@@ -331,7 +331,7 @@ class SpeakTest(Base):
                 mock.patch.object(A, "r2", lambda: r2), mock.patch.object(A, "fetch_queue", queue), \
                 mock.patch.object(A.subprocess, "run", ffmpeg), mock.patch.object(A, "log"):
             A.cmd_speak(NS(wave="gn", batch=0, steps=12))
-        self.assertEqual(TTS.said, "Learjet 60 crashes. Nine died.")   # from the private branch
+        self.assertEqual(TTS.said, "Learjet sixty crashes. Nine died.")   # from the private branch
         self.assertIn(f"{KEY}.mp3", r2.names)
         self.assertIn(f"{KEY}.mp3.{A.fingerprint(EN)}", r2.names)
         self.assertNotIn(old, r2.names)
