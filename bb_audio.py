@@ -49,6 +49,7 @@ VOICES: dict[str, list[str]] = {lang: ["F3", "M3"] for lang in ("de", "fr", "es"
 VOICES["en"] = ["F5"]
 VOICES["de"] = ["M1"]  # Alex (Will, 28 Oct)
 VOICES["fr"] = ["M1"]  # Alex (Will, 28 Oct)
+VOICES["it"] = ["M3"]  # Robert: Jessica sounded false in Italian (Will, 7 Nov)
 VOICES.update(json.loads(os.environ.get("BB_VOICES") or "{}"))
 
 # Quality = refinement steps (2-16; the library default is 8). Speed 1.0 reads too fast for learners;
@@ -232,7 +233,9 @@ def cmd_plan(args) -> None:
     done = (existing_keys(client, date) | existing_keys(client, TITLES_FOLDER)) if client else set()
     read = reader(done)
     if args.again:  # read today's articles and intros again, after a change to how they're said
-        read = lambda key, a, read=read: False if key.startswith(f"{date}/") else read(key, a)
+        only = set(filter(None, args.languages.split(",")))
+        read = lambda key, a, read=read: (False if key.startswith(f"{date}/") and (not only or key.split("/")[1] in only)
+                                          else read(key, a))
     items, skipped = [], 0
     for lang, level, length, a in articles(bundle):
         slug, text = a.get("slug"), text_of(a, lang)
@@ -748,6 +751,7 @@ def main() -> None:
     a.add_argument("--wait", type=float, default=0, help="minutes to wait for today's brief to be served")
     a.add_argument("--approved", action="store_true", help="the articles approved so far, not the published brief")
     a.add_argument("--again", action="store_true", help="read today's articles and intros again, even if already read")
+    a.add_argument("--languages", default="", help="with --again, only these languages, e.g. it,de")
     a.set_defaults(fn=cmd_plan)
     a = sub.add_parser("speak")
     a.add_argument("--wave", choices=["gn", "rest"], required=True)

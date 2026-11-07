@@ -60,14 +60,14 @@ class Base(unittest.TestCase):
         env.start()
         self.addCleanup(env.stop)
 
-    def plan(self, r2, approved=False, bundle=None, q=None, again=False):
+    def plan(self, r2, approved=False, bundle=None, q=None, again=False, languages=""):
         with mock.patch.object(A, "r2", lambda: r2), mock.patch.object(A, "today_utc", lambda: DATE), \
                 mock.patch.object(A, "existing_keys", lambda c, d: set(c.names)), \
                 mock.patch.object(A, "fetch_bundle", lambda: bundle or brief()), \
                 mock.patch.object(A, "make_saved_parts", lambda *a: None), \
                 mock.patch.object(A, "fetch_queue", lambda: q if q is not None else queue()), \
                 mock.patch.object(A, "log"):
-            A.cmd_plan(NS(date="", wait=0, batches=20, limit=0, approved=approved, again=again))
+            A.cmd_plan(NS(date="", wait=0, batches=20, limit=0, approved=approved, again=again, languages=languages))
         plan = json.loads(A.PLAN.read_text()) if A.PLAN.exists() else {}
         return plan, self.out.read_text()
 
@@ -127,6 +127,12 @@ class PlanTest(Base):
         keys = [i["key"] for w in plan["waves"].values() for b in w for i in b]
         self.assertIn(KEY, keys)
         self.assertIn(f"{DATE}/en/A1/short/crash", keys)
+
+    def test_read_again_can_be_one_language(self):
+        done = {f"{KEY}.mp3", f"{KEY}.mp3.{A.fingerprint(EN)}"}
+        plan, _ = self.plan(FakeR2(done), again=True, languages="it")
+        keys = [i["key"] for w in plan["waves"].values() for b in w for i in b]
+        self.assertNotIn(KEY, keys)                                   # English, already read
 
     def test_a_publish_run_only_reads_what_is_left(self):
         done = {f"{KEY}.mp3", f"{KEY}.mp3.{A.fingerprint(EN)}"}

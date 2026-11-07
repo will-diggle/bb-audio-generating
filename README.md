@@ -6,7 +6,7 @@ MP3s to Cloudflare R2, where the app's Worker serves them (`/audio/{date}/{lang}
 - **Voice model:** [Supertonic 3](https://huggingface.co/Supertone/supertonic-3) by Supertone, run on
   GitHub's machines (no API, no per-character cost). Licence: OpenRAIL-M. Only the model's 10 built-in
   voices are used.
-- **Voices:** English is Emily (F5); German (speed 0.95) and French are Alex (M1). The other languages alternate Jessica (F3) and Robert (M3) story
+- **Voices:** English is Emily (F5); German (speed 0.95) and French are Alex (M1), and Italian is Robert (M3). The other languages alternate Jessica (F3) and Robert (M3) story
   by story. Speed 0.92, quality 12 steps. All are set at the top of `bb_audio.py`, or by the
   `BB_VOICES`, `BB_TTS_SPEED` and `BB_TTS_STEPS` environment variables.
 - **When it runs:** as soon as the other AIs have approved each article, never before. The pipeline
