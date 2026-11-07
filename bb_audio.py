@@ -167,8 +167,12 @@ def _spoken(a: dict) -> str:
             f"{a.get('bodyAudio') or a.get('body') or ''}").strip()
 
 
-def text_of(a: dict) -> str:
-    return _spoken(a).translate(PLAIN)
+def text_of(a: dict, lang: str) -> str:
+    """What the voice reads: the audio text with every number written out (spoken.py), which a
+    number's bracket in the article as shown helps with."""
+    from spoken import say
+    shown = f"{a.get('headline') or ''}. {a.get('body') or ''}"
+    return say(_spoken(a).translate(PLAIN), lang, shown)
 
 
 def fingerprint(a: dict) -> str:
@@ -229,7 +233,7 @@ def cmd_plan(args) -> None:
     read = reader(done)
     items, skipped = [], 0
     for lang, level, length, a in articles(bundle):
-        slug, text = a.get("slug"), text_of(a)
+        slug, text = a.get("slug"), text_of(a, lang)
         if not slug or len(text) < 3:
             continue
         key = f"{date}/{lang}/{level}/{length}/{slug}"
@@ -315,7 +319,8 @@ def intro_headlines(bundle: dict) -> dict:
     date = bundle.get("date") or ""
     for lang, level, length, a in articles(bundle):
         if lang in play_all.GREETINGS and (a.get("genre") or "").upper() == "GLOBAL NEWS":
-            headline = (a.get("headlineAudio") or a.get("headline") or "").translate(PLAIN)
+            from spoken import say
+            headline = say((a.get("headlineAudio") or a.get("headline") or "").translate(PLAIN), lang, a.get("headline"))
             if headline.strip():
                 found.setdefault(intro_key(date, lang, level, length), []).append(play_all.as_sentence(headline))
     return {key: "\n".join(lines) for key, lines in found.items()}
@@ -478,7 +483,7 @@ def cmd_speak(args) -> None:
     approved = {}
     if plan.get("approved"):
         queue = fetch_queue()
-        approved = {f"{plan['date']}/{lang}/{level}/{length}/{a.get('slug')}": text_of(a)
+        approved = {f"{plan['date']}/{lang}/{level}/{length}/{a.get('slug')}": text_of(a, lang)
                     for lang, level, length, a in articles(queue)}
         approved.update(intro_headlines(queue))
     from supertonic import TTS
