@@ -77,6 +77,23 @@ class TextTest(unittest.TestCase):
         self.assertEqual(A.text_of(EN), "Learjet 60 crashes. Nine died.")
         self.assertEqual(A.text_of(LEVEL), "A plane crashed. Nine people died.")
 
+    def test_invisible_marks_are_dropped_inside_words(self):
+        # a soft hyphen in a Swedish native article lost its audio on 7 Nov 2026
+        self.assertEqual(A.text_of({"headline": "Merz", "body": "presi\xaddent​ val﻿"}),
+                         "Merz. president val")
+
+    def test_a_character_the_voice_refuses_is_dropped_even_when_it_prints_escaped(self):
+        class TTS:
+            said = []
+            def get_voice_style(self, v): return v
+            def synthesize(self, text, **_):
+                TTS.said.append(text)
+                if "\x07" in text:
+                    raise ValueError("Found 1 unsupported character(s): " + repr(["\x07"]))
+                return "wav", None
+        self.assertEqual(A.synthesize(TTS(), {}, "Ett\x07två", "F3", "sv", 12), "wav")
+        self.assertEqual(TTS.said[-1], "Ett två")
+
     def test_the_fingerprint_is_the_same_as_the_pipelines(self):
         # audio_queue.fingerprint in Claude-Routines' test_audio_queue.py has this same value
         self.assertEqual(A.fingerprint(EN), "7fad55e58bbe")
