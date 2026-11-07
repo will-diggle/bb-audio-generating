@@ -60,14 +60,14 @@ class Base(unittest.TestCase):
         env.start()
         self.addCleanup(env.stop)
 
-    def plan(self, r2, approved=False, bundle=None, q=None):
+    def plan(self, r2, approved=False, bundle=None, q=None, again=False):
         with mock.patch.object(A, "r2", lambda: r2), mock.patch.object(A, "today_utc", lambda: DATE), \
                 mock.patch.object(A, "existing_keys", lambda c, d: set(c.names)), \
                 mock.patch.object(A, "fetch_bundle", lambda: bundle or brief()), \
                 mock.patch.object(A, "make_saved_parts", lambda *a: None), \
                 mock.patch.object(A, "fetch_queue", lambda: q if q is not None else queue()), \
                 mock.patch.object(A, "log"):
-            A.cmd_plan(NS(date="", wait=0, batches=20, limit=0, approved=approved))
+            A.cmd_plan(NS(date="", wait=0, batches=20, limit=0, approved=approved, again=again))
         plan = json.loads(A.PLAN.read_text()) if A.PLAN.exists() else {}
         return plan, self.out.read_text()
 
@@ -120,6 +120,13 @@ class PlanTest(Base):
         self.assertNotIn("Learjet", A.PLAN.read_text())
         self.assertEqual(plan["waves"]["gn"][0][0]["mark"], A.fingerprint(EN))
         self.assertIn("source=approved", out)
+
+    def test_read_again_reads_today_s_articles_even_if_read(self):
+        done = {f"{KEY}.mp3", f"{KEY}.mp3.{A.fingerprint(EN)}", "play-all/en/uk.mp3"}
+        plan, _ = self.plan(FakeR2(done), again=True)
+        keys = [i["key"] for w in plan["waves"].values() for b in w for i in b]
+        self.assertIn(KEY, keys)
+        self.assertIn(f"{DATE}/en/A1/short/crash", keys)
 
     def test_a_publish_run_only_reads_what_is_left(self):
         done = {f"{KEY}.mp3", f"{KEY}.mp3.{A.fingerprint(EN)}"}
@@ -198,11 +205,13 @@ class PlayAllTest(Base):
             self.assertEqual(len(P.MONTHS[lang]), 12, lang)
             self.assertEqual(len(P.DAYS[lang]), 31, lang)
             self.assertEqual(set(P.TITLES[lang]), set(P.TOPICS), lang)
-            self.assertIn("Bilinguist Brief", P.HEADLINES[lang], lang)
+            self.assertIn("Bilinguist Brief", P.greeting_line(lang, "morning"), lang)
             self.assertEqual(len(P.saved_lines(lang)), 6 if lang == "en" else 5, lang)
 
     def test_the_greeting_says_the_time_and_the_day(self):
-        self.assertEqual(P.greeting_line("en", "evening"), "Good evening.")
+        self.assertEqual(P.greeting_line("en", "evening"), "Good evening and welcome to the Bilinguist Brief.")
+        self.assertEqual(P.intro_title("en"), "The Bilinguist Brief. Global News.")
+        self.assertEqual(P.HEADLINES["en"], "Here are today's top headlines.")
         self.assertEqual(P.day_line("en", DATE), "Today is Tuesday the third of November.")
         self.assertIn("Dienstag, der dritte November", P.day_line("de", DATE))
         self.assertIn("treinta y uno de diciembre", P.day_line("es", "2026-12-31"))
