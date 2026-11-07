@@ -19,6 +19,7 @@ Model: Supertonic 3 (Supertone, OpenRAIL-M; its 10 built-in voices only).
 from __future__ import annotations
 
 import argparse
+import ast
 import base64
 import hashlib
 import json
@@ -58,7 +59,9 @@ SPEED_BY_LANG: dict[str, float] = {"de": 0.95}  # Alex reads German best a touch
 
 # Supertonic refuses typographic quotes (German „ …); plain ones read the same.
 PLAIN = str.maketrans({"„": '"', "“": '"', "”": '"', "«": '"', "»": '"', "‹": "'", "›": "'", "‚": "'",
-                       "‘": "'", "’": "'", "–": "-", "—": "-", "…": "...", " ": " ", " ": " "})
+                       "‘": "'", "’": "'", "–": "-", "—": "-", "…": "...", " ": " ", " ": " ",
+                       # invisible marks the voice refuses ("\xad" lost a Swedish article on 7 Nov 2026)
+                       **dict.fromkeys(["\u00ad", "\u200b", "\u200c", "\u200d", "\u2060", "\ufeff"])})
 
 
 def log(msg: str) -> None:
@@ -397,7 +400,8 @@ def synthesize(tts, styles: dict, text: str, voice: str, lang: str, steps: int):
                                     speed=SPEED_BY_LANG.get(lang, SPEED))
             return wav
         except ValueError as e:  # a character the model can't read: say nothing for it
-            bad = re.findall(r"'(.)'", str(e))
+            listed = re.search(r"\[.*\]", str(e))
+            bad = [ch for ch in ast.literal_eval(listed[0]) if ch in text] if listed else []
             if not bad:
                 raise
             for ch in bad:
