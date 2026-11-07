@@ -1,7 +1,7 @@
 """The spoken parts of Play all (Will, 3 Nov 2026), in the brief's language.
 
-Each edition (language, level, length) gets an intro: the greeting, the day, a line introducing the
-headlines, that edition's Global News headlines, a pause and "Bilinguist Brief Global News", over news
+Each edition (language, level, length) gets an intro: the greeting and welcome, the day, a line introducing
+the headlines, that edition's Global News headlines, a pause and "The Bilinguist Brief. Global News.", over news
 music that fades out as the first article starts. Everything but the day and the headlines is read once and
 saved. There is one for each time of day, and each has a version with no title, for a reader
 whose brief doesn't start with Global News. Concise editions also have one for free readers, ending
@@ -15,7 +15,7 @@ from datetime import datetime
 TIMES = ("morning", "afternoon", "evening")
 
 # Bump when these words or the music in R2 change, so every intro is made again
-INTRO_VERSION = "4"
+INTRO_VERSION = "5"
 
 GREETINGS = {
     "en": ("Good morning", "Good afternoon", "Good evening"),
@@ -38,14 +38,25 @@ TODAY = {
     "sv": "Idag är det {weekday} den {day} {month}.",
 }
 
+# After the greeting: "Good morning and welcome to the Bilinguist Brief." (Will, 7 Nov 2026)
+WELCOME = {
+    "en": "and welcome to the Bilinguist Brief",
+    "de": "und willkommen bei Bilinguist Brief",
+    "fr": "et bienvenue sur Bilinguist Brief",
+    "es": "y bienvenidos a Bilinguist Brief",
+    "it": "e benvenuti a Bilinguist Brief",
+    "pt": "e bem-vindos ao Bilinguist Brief",
+    "sv": "och välkommen till Bilinguist Brief",
+}
+
 HEADLINES = {
-    "en": "Here are today's Bilinguist Brief headlines.",
-    "de": "Hier sind die heutigen Schlagzeilen von Bilinguist Brief.",
-    "fr": "Voici les titres du jour de Bilinguist Brief.",
-    "es": "Estos son los titulares de hoy de Bilinguist Brief.",
-    "it": "Ecco i titoli di oggi di Bilinguist Brief.",
-    "pt": "Estas são as manchetes de hoje do Bilinguist Brief.",
-    "sv": "Här är dagens rubriker från Bilinguist Brief.",
+    "en": "Here are today's top headlines.",
+    "de": "Hier sind die wichtigsten Schlagzeilen des Tages.",
+    "fr": "Voici les principaux titres du jour.",
+    "es": "Estos son los principales titulares de hoy.",
+    "it": "Ecco i principali titoli di oggi.",
+    "pt": "Estas são as principais manchetes de hoje.",
+    "sv": "Här är dagens viktigaste rubriker.",
 }
 
 WEEKDAYS = {  # Monday first
@@ -121,7 +132,7 @@ FREE_MESSAGE = "For more daily news articles in full, subscribe to Brief Plus to
 
 
 def greeting_line(lang: str, time: str) -> str:
-    return f"{GREETINGS[lang][TIMES.index(time)]}."
+    return f"{GREETINGS[lang][TIMES.index(time)]} {WELCOME[lang]}."
 
 
 def day_line(lang: str, date: str) -> str:
@@ -131,7 +142,8 @@ def day_line(lang: str, date: str) -> str:
 
 
 def intro_title(lang: str) -> str:
-    return f"Bilinguist Brief {TITLES[lang]['GLOBAL NEWS']}"
+    """"The Bilinguist Brief. Global News.", with a stop between them (Will, 7 Nov 2026)."""
+    return f"{'The Bilinguist Brief' if lang == 'en' else 'Bilinguist Brief'}. {TITLES[lang]['GLOBAL NEWS']}."
 
 
 def saved_lines(lang: str) -> list[str]:

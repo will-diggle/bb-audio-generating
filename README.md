@@ -65,7 +65,7 @@ the end, as with `audioKey`.
 
 - `{time}` is `morning`, `afternoon` or `evening`. `{level}` is `A1` to `B2` or `Native`, as in `audioKey`.
 - It has about 2.5 seconds of music, then the greeting, the day, a line introducing the headlines, that
-  edition's Global News headlines, a pause and "Bilinguist Brief Global News". The music then fades to
+  edition's Global News headlines, a pause and "The Bilinguist Brief. Global News.". The music then fades to
   nothing over 3 seconds, so the first article starts straight after it.
 - `-no-title` stops after the headlines, for a brief that doesn't start with Global News.
 - `-free` is on `short` editions only, for free readers. After the headlines it says, in English in
@@ -98,7 +98,7 @@ the Worker can't serve it on its own, as its licence requires. To change it, rep
 `INTRO_VERSION` in `play_all.py`, and every intro is made again. With no file, the
 intros are made with no music.
 
-**To save time**, the greeting, the line introducing the headlines and "Bilinguist Brief Global News" are read
+**To save time**, the greeting, the line introducing the headlines and "The Bilinguist Brief. Global News." are read
 once per language and saved in `play-all/{lang}/parts/`. The date line is read once a day per language
 before the machines start. Only the headlines are read for each edition; the music is added in code.
 

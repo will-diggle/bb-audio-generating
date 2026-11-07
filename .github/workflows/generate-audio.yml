@@ -25,6 +25,10 @@ on:
       batches:
         description: "Machines per wave (max 20)"
         default: "20"
+      again:
+        description: "Read today's audio again, even what's already read (after a change to how it's said)"
+        type: boolean
+        default: false
 
 concurrency:
   group: bb-audio
@@ -68,7 +72,7 @@ jobs:
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           DATA_REPO_TOKEN: ${{ secrets.DATA_REPO_TOKEN }}
-        run: python bb_audio.py plan --batches "${{ inputs.batches || 20 }}" --limit "${{ inputs.limit || 0 }}" ${{ github.event.action == 'articles-approved' && '--approved' || (github.event.action == 'brief-ready' && '--wait 10' || '') }}
+        run: python bb_audio.py plan --batches "${{ inputs.batches || 20 }}" --limit "${{ inputs.limit || 0 }}" ${{ inputs.again && '--again' || '' }} ${{ github.event.action == 'articles-approved' && '--approved' || (github.event.action == 'brief-ready' && '--wait 10' || '') }}
       # Whatever the final check couldn't label in its own push (it was read just too late)
       - name: Label what's already read
         if: steps.plan.outputs.source == 'brief'

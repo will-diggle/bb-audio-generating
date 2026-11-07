@@ -231,6 +231,8 @@ def cmd_plan(args) -> None:
     client = r2()
     done = (existing_keys(client, date) | existing_keys(client, TITLES_FOLDER)) if client else set()
     read = reader(done)
+    if args.again:  # read today's articles and intros again, after a change to how they're said
+        read = lambda key, a, read=read: False if key.startswith(f"{date}/") else read(key, a)
     items, skipped = [], 0
     for lang, level, length, a in articles(bundle):
         slug, text = a.get("slug"), text_of(a, lang)
@@ -745,6 +747,7 @@ def main() -> None:
     a.add_argument("--limit", type=int, default=0, help="only this many articles (a test run)")
     a.add_argument("--wait", type=float, default=0, help="minutes to wait for today's brief to be served")
     a.add_argument("--approved", action="store_true", help="the articles approved so far, not the published brief")
+    a.add_argument("--again", action="store_true", help="read today's articles and intros again, even if already read")
     a.set_defaults(fn=cmd_plan)
     a = sub.add_parser("speak")
     a.add_argument("--wave", choices=["gn", "rest"], required=True)
